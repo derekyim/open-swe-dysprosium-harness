@@ -1,5 +1,13 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+cat >> .gitignore <<'EOF'
 
+# editor temp/backup files
+#*#
+*~
+.#*
+EOF
+
+setup.md
 # dependencies
 /node_modules
 **/node_modules
