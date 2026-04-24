@@ -1,0 +1,22 @@
+1.
+
+fork in the UI 
+fork      github.com/open-swe.git
+
+cd code
+
+git clone git@github.com:derekyim/open-swe-dysprosium-harness.git
+
+cd dysprosium-harness-kit
+git remote rename origin fork
+git remote add upstream https://github.com/langchain-ai/open-swe.git
+git remote -v
+
+2.
+python3.13 -m venv .venv
+source .venv/bin/activate
+python --version
+
+3.
+
+3.
