@@ -76,8 +76,12 @@ DEFAULT_REPO_NAME = os.environ.get("DEFAULT_REPO_NAME", "langchainplus")
 SLACK_REPO_OWNER = os.environ.get("SLACK_REPO_OWNER", "") or DEFAULT_REPO_OWNER
 SLACK_REPO_NAME = os.environ.get("SLACK_REPO_NAME", "") or DEFAULT_REPO_NAME
 
-LANGGRAPH_URL = os.environ.get("LANGGRAPH_URL") or os.environ.get(
-    "LANGGRAPH_URL_PROD", "http://localhost:2024"
+_LG_HOST = os.environ.get("LANGGRAPH_HOST", "localhost")
+_LG_PORT = os.environ.get("LANGGRAPH_PORT", "2024")
+LANGGRAPH_URL = (
+    os.environ.get("LANGGRAPH_URL")
+    or os.environ.get("LANGGRAPH_URL_PROD")
+    or f"http://{_LG_HOST}:{_LG_PORT}"
 )
 
 _AGENT_VERSION_METADATA: dict[str, str] = (

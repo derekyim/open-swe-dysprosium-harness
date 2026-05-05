@@ -60,6 +60,7 @@ from .tools import (
     web_search,
 )
 from .utils.auth import resolve_github_token
+from .utils.env_config import env_float, env_int, env_str
 from .utils.github_app import get_github_app_installation_token
 from .utils.model import make_model
 from .utils.sandbox import create_sandbox
@@ -68,8 +69,8 @@ from .utils.sandbox_paths import aresolve_sandbox_work_dir
 client = get_client()
 
 SANDBOX_CREATING = "__creating__"
-SANDBOX_CREATION_TIMEOUT = 180
-SANDBOX_POLL_INTERVAL = 1.0
+SANDBOX_CREATION_TIMEOUT = env_int("SANDBOX_CREATION_TIMEOUT_SECONDS", 180)
+SANDBOX_POLL_INTERVAL = env_float("SANDBOX_POLL_INTERVAL_SECONDS", 1.0)
 
 from .utils.sandbox_state import SANDBOX_BACKENDS, get_sandbox_id_from_metadata
 
@@ -186,7 +187,8 @@ def graph_loaded_for_execution(config: RunnableConfig) -> bool:
 
 
 DEFAULT_LLM_MODEL_ID = "anthropic:claude-opus-4-6"
-DEFAULT_RECURSION_LIMIT = 1_000
+DEFAULT_RECURSION_LIMIT = env_int("AGENT_RECURSION_LIMIT", 1_000)
+DEFAULT_LLM_MAX_TOKENS = env_int("LLM_MAX_TOKENS", 20_000)
 
 
 async def get_agent(config: RunnableConfig) -> Pregel:
@@ -264,9 +266,11 @@ async def get_agent(config: RunnableConfig) -> Pregel:
             metadata={"sandbox_id": sandbox_backend.id},
         )
 
+        bot_name = env_str("OPEN_SWE_BOT_NAME", "open-swe[bot]")
+        bot_email = env_str("OPEN_SWE_BOT_EMAIL", "open-swe@users.noreply.github.com")
         await asyncio.to_thread(
             sandbox_backend.execute,
-            "git config --global user.name 'open-swe[bot]' && git config --global user.email 'open-swe@users.noreply.github.com'",
+            f"git config --global user.name '{bot_name}' && git config --global user.email '{bot_email}'",
         )
 
     linear_issue = config["configurable"].get("linear_issue", {})
@@ -279,7 +283,7 @@ async def get_agent(config: RunnableConfig) -> Pregel:
     return create_deep_agent(
         model=make_model(
             os.environ.get("LLM_MODEL_ID", DEFAULT_LLM_MODEL_ID),
-            max_tokens=20_000,
+            max_tokens=DEFAULT_LLM_MAX_TOKENS,
         ),
         system_prompt=construct_system_prompt(
             working_dir=work_dir,

@@ -8,12 +8,13 @@ from typing import Any
 
 import httpx
 
+from .env_config import env_str
 from .github_user_email_map import GITHUB_USER_EMAIL_MAP
 
 logger = logging.getLogger(__name__)
 
-OPEN_SWE_BOT_NAME = "open-swe[bot]"
-OPEN_SWE_BOT_EMAIL = "open-swe@users.noreply.github.com"
+OPEN_SWE_BOT_NAME = env_str("OPEN_SWE_BOT_NAME", "open-swe[bot]")
+OPEN_SWE_BOT_EMAIL = env_str("OPEN_SWE_BOT_EMAIL", "open-swe@users.noreply.github.com")
 
 
 @dataclass(frozen=True)
