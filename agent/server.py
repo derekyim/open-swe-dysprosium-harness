@@ -28,6 +28,7 @@ from langsmith.sandbox import SandboxClientError
 from .integrations.langsmith import _configure_github_proxy
 from .middleware import (
     ToolErrorMiddleware,
+    announce_progress_if_needed,
     check_message_queue_before_model,
     ensure_no_empty_msg,
     open_pr_if_needed,
@@ -52,6 +53,7 @@ from .tools import (
     list_pr_review_comments,
     list_pr_reviews,
     list_repos,
+    role_status,
     slack_thread_reply,
     submit_pr_review,
     update_pr_review,
@@ -299,6 +301,7 @@ async def get_agent(config: RunnableConfig) -> Pregel:
             linear_list_teams,
             linear_update_issue,
             slack_thread_reply,
+            role_status,
             github_comment,
             list_pr_reviews,
             get_pr_review,
@@ -314,5 +317,6 @@ async def get_agent(config: RunnableConfig) -> Pregel:
             check_message_queue_before_model,
             ensure_no_empty_msg,
             open_pr_if_needed,
+            announce_progress_if_needed,
         ],
     ).with_config(config)

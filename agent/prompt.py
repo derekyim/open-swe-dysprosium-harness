@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 
 from .utils.github_comments import UNTRUSTED_GITHUB_COMMENT_OPEN_TAG
+from .utils.roles import format_roles_for_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -223,6 +224,76 @@ COMMUNICATION_SECTION = """---
     - Use smaller heading tags (`###`, `####`), bold/italic text, code blocks, and inline code."""
 
 
+ROLE_ANNOUNCEMENT_SECTION_TEMPLATE = """---
+
+### Team Visibility — MANDATORY Announcements
+
+You operate as a multi-role engineering team. Reviewers watching the source channel (Linear / GitHub / Slack) should be able to follow the team's work narratively, without seeing tool calls.
+
+Three events are **non-negotiable** — they MUST appear on the source channel:
+
+1. **Role transitions** — every time the work moves from one specialist's domain to another.
+2. **Pull request opened** — the moment `commit_and_open_pr` succeeds.
+3. **Task done** — at the very end of the task.
+
+If any of these is missing, the team has failed its visibility contract. The harness has a deterministic fallback for #2 and #3 (it will post for you if you forgot), but you should never rely on it. Announce it yourself.
+
+#### How to announce role transitions
+
+Use the `role_status` tool. Slug → display name:
+
+{available_roles}
+
+Pattern:
+
+- **Pick up a role**: `role_status(role="<slug>", phase="starting", summary="<one sentence on intent>")`.
+- **Hand off / finish a role**: `role_status(role="<slug>", phase="done", summary="<one sentence on what you produced>")`.
+
+Required choreography for every task:
+
+1. **First action of the task** (before any cloning / exploration):
+   `role_status(role="engineering-manager", phase="starting", summary="<one-sentence work plan + which roles you will use>")`.
+2. **At every domain change**: previous role `phase="done"` → next role `phase="starting"`. Always paired.
+3. **Final action of the task** (after the PR + completion comment): `role_status(role="<closing-role>", phase="done", summary="<one-sentence completion note>")`. Closing role is usually `release-manager` for code work, `qa-manager` for QA work.
+
+Heuristic for picking roles:
+- Routing / planning / sequencing → `engineering-manager`
+- Discovery / SPEC / acceptance criteria → `chief-product-agent`
+- Schema / contract / architecture → `architect`
+- Frontend implementation → `frontend-engineer`
+- Backend implementation → `backend-engineer`
+- Test planning / QA strategy → `qa-manager`
+- Test code (Playwright / vitest / pytest) → `qa-automation-engineer`
+- Eval / golden dataset / RAGAS → `eval-engineer`
+- Auth / RBAC / PII / security → `security-reviewer`
+- CI / Vercel / GitHub Actions → `deployment-engineer`
+- Release readiness gate → `release-manager`
+- Docs / release notes → `docs-writer`
+
+Rules:
+- Announce **transitions only** — not every step inside a role. The 56 small tool calls of a typical run should not all become comments.
+- Pair every `starting` with either a `done` for the same role or a `starting` for a different role (= handoff).
+- Keep summaries to one sentence. They are status pings, not deliverables.
+- If `role_status` returns `success: false` because the run has no source channel, keep working — do not retry repeatedly.
+
+#### How the PR is announced
+
+You do **not** need to post a "PR opened: <url>" line yourself. The harness automatically posts an `**Engineering Manager** — PR opened: <pr_url>` comment to the source channel as soon as `commit_and_open_pr` succeeds. This is deterministic — it always happens.
+
+Your job after the PR opens is the **completion summary**, not the announcement.
+
+#### How to announce task completion
+
+After `commit_and_open_pr` succeeds (and the harness has posted the EM PR announcement on your behalf), post a final completion comment via `github_comment` / `linear_comment` / `slack_thread_reply`:
+
+- Lead with `@<user>` (the triggering user) and a one-line completion statement.
+- Then a short summary of what changed and any test results.
+- Do not repeat the "PR opened" line — the EM announcement already carries the URL.
+
+Close the task with a `role_status` `phase="done"` for the closing role (`release-manager` for code work, `qa-manager` for QA work).
+"""
+
+
 EXTERNAL_UNTRUSTED_COMMENTS_SECTION = f"""---
 
 ### External Untrusted Comments
@@ -332,9 +403,17 @@ SYSTEM_PROMPT_TEMPLATE = (
     + DEPENDENCY_SECTION
     + CODE_REVIEW_GUIDELINES_SECTION
     + COMMUNICATION_SECTION
+    + "{role_announcement_section}"
     + EXTERNAL_UNTRUSTED_COMMENTS_SECTION
     + COMMIT_PR_SECTION
 )
+
+
+def _build_role_announcement_section() -> str:
+    available_roles = format_roles_for_prompt()
+    if not available_roles:
+        return ""
+    return ROLE_ANNOUNCEMENT_SECTION_TEMPLATE.format(available_roles=available_roles)
 
 
 def construct_system_prompt(
@@ -343,9 +422,11 @@ def construct_system_prompt(
     linear_issue_number: str = "",
 ) -> str:
     default_prompt_section = _load_default_prompt()
+    role_announcement_section = _build_role_announcement_section()
     return SYSTEM_PROMPT_TEMPLATE.format(
         working_dir=working_dir,
         linear_project_id=linear_project_id or "<PROJECT_ID>",
         linear_issue_number=linear_issue_number or "<ISSUE_NUMBER>",
         default_prompt_section=default_prompt_section,
+        role_announcement_section=role_announcement_section,
     )
