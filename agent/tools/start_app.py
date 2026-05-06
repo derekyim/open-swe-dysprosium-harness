@@ -8,6 +8,7 @@ or `AGENTS.md`.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import signal
@@ -40,48 +41,20 @@ def _log_path(port: int) -> Path:
     return LOG_DIR / f"port_{port}.log"
 
 
-def start_app(
+def _start_app_sync(
     working_dir: str,
     command: str,
     port: int,
-    ready_path: str = "/",
-    timeout_seconds: int = 60,
-    scheme: str = "http",
-    verify_tls: bool = True,
+    ready_path: str,
+    timeout_seconds: int,
+    scheme: str,
+    verify_tls: bool,
 ) -> dict[str, Any]:
-    """Spawn a dev server in the background and poll for HTTP(S) readiness.
+    """Sync inner — runs on a worker thread via `asyncio.to_thread`.
 
-    The process runs detached (its own session/process group) so it
-    survives this tool call. Output is redirected to a log file. The
-    function polls `<scheme>://localhost:<port><ready_path>` once a
-    second until it returns any non-5xx response, or the timeout
-    expires.
-
-    Args:
-        working_dir: Repo root or package directory in which to run
-            `command`. Same shape as you'd `cd` into.
-        command: Shell command (passed to bash, not exec'd directly).
-            Examples: `"yarn dev"`, `"pnpm --filter web dev"`,
-            `"uvicorn app:app --port 8000"`. Use `"bash -lc '...'"`
-            to get a login shell that sources `~/.nvm/nvm.sh` so
-            `nvm use 20 && npm start` works.
-        port: TCP port the app will bind. Used to construct the
-            readiness URL and to dedupe state files (one app per port).
-        ready_path: Path component for the readiness probe. Defaults to
-            `"/"`. Use `"/health"` or `"/api/health"` if the root path
-            is slow or auth-gated.
-        timeout_seconds: Max seconds to wait for readiness. Default 60.
-            Bump to 180+ for first-time Vite/webpack cold compiles.
-        scheme: `"http"` (default) or `"https"`. Use `"https"` for dev
-            servers that bind TLS only (mkcert / office-addin-dev-certs).
-        verify_tls: Whether to verify TLS certs on the readiness probe.
-            Default `True`. Set `False` for self-signed local certs.
-
-    Returns:
-        Dict with `success` (bool). On success: `url`, `pid`,
-        `status_code`, `log_path`, `elapsed_seconds`. On failure:
-        `error`, plus `log_tail`, `log_path`, `pid`, `last_error` for
-        debugging. Use `stop_app(port)` to shut it down.
+    `subprocess.Popen`, `httpx.get`, and `time.sleep` are all blocking;
+    LangGraph's blockbuster instrumentation refuses them on the event
+    loop, so the public `start_app` is async and offloads here.
     """
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_path = _log_path(port)
@@ -146,20 +119,63 @@ def start_app(
     }
 
 
-def stop_app(port: int) -> dict[str, Any]:
-    """Stop a previously-started app dev server on the given port.
+async def start_app(
+    working_dir: str,
+    command: str,
+    port: int,
+    ready_path: str = "/",
+    timeout_seconds: int = 60,
+    scheme: str = "http",
+    verify_tls: bool = True,
+) -> dict[str, Any]:
+    """Spawn a dev server in the background and poll for HTTP(S) readiness.
 
-    Sends SIGTERM to the whole process group, waits 2s, then SIGKILL
-    anything still alive. Cleans up the PID file. Idempotent — safe to
-    call when nothing is running.
+    The process runs detached (its own session/process group) so it
+    survives this tool call. Output is redirected to a log file. The
+    function polls `<scheme>://localhost:<port><ready_path>` once a
+    second until it returns any non-5xx response, or the timeout
+    expires.
 
     Args:
-        port: The same port that was passed to `start_app`.
+        working_dir: Repo root or package directory in which to run
+            `command`. Same shape as you'd `cd` into.
+        command: Shell command (passed to bash, not exec'd directly).
+            Examples: `"yarn dev"`, `"pnpm --filter web dev"`,
+            `"uvicorn app:app --port 8000"`. Use `"bash -lc '...'"`
+            to get a login shell that sources `~/.nvm/nvm.sh` so
+            `nvm use 20 && npm start` works.
+        port: TCP port the app will bind. Used to construct the
+            readiness URL and to dedupe state files (one app per port).
+        ready_path: Path component for the readiness probe. Defaults to
+            `"/"`. Use `"/health"` or `"/api/health"` if the root path
+            is slow or auth-gated.
+        timeout_seconds: Max seconds to wait for readiness. Default 60.
+            Bump to 180+ for first-time Vite/webpack cold compiles.
+        scheme: `"http"` (default) or `"https"`. Use `"https"` for dev
+            servers that bind TLS only (mkcert / office-addin-dev-certs).
+        verify_tls: Whether to verify TLS certs on the readiness probe.
+            Default `True`. Set `False` for self-signed local certs.
 
     Returns:
-        Dict with `success` (bool) and either `pid` (when stopped) or
-        `error` (when no PID file or process not found).
+        Dict with `success` (bool). On success: `url`, `pid`,
+        `status_code`, `log_path`, `elapsed_seconds`. On failure:
+        `error`, plus `log_tail`, `log_path`, `pid`, `last_error` for
+        debugging. Use `stop_app(port)` to shut it down.
     """
+    return await asyncio.to_thread(
+        _start_app_sync,
+        working_dir,
+        command,
+        port,
+        ready_path,
+        timeout_seconds,
+        scheme,
+        verify_tls,
+    )
+
+
+def _stop_app_sync(port: int) -> dict[str, Any]:
+    """Sync inner — runs on a worker thread via `asyncio.to_thread`."""
     pid_path = _pid_path(port)
     if not pid_path.exists():
         return {"success": False, "error": f"no PID file for port {port}"}
@@ -187,3 +203,20 @@ def stop_app(port: int) -> dict[str, Any]:
 
     pid_path.unlink(missing_ok=True)
     return {"success": True, "pid": pid, "pgid": pgid}
+
+
+async def stop_app(port: int) -> dict[str, Any]:
+    """Stop a previously-started app dev server on the given port.
+
+    Sends SIGTERM to the whole process group, waits 2s, then SIGKILL
+    anything still alive. Cleans up the PID file. Idempotent — safe to
+    call when nothing is running.
+
+    Args:
+        port: The same port that was passed to `start_app`.
+
+    Returns:
+        Dict with `success` (bool) and either `pid` (when stopped) or
+        `error` (when no PID file or process not found).
+    """
+    return await asyncio.to_thread(_stop_app_sync, port)

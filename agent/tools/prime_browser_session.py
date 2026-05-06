@@ -19,6 +19,7 @@ message stream — it passes the placeholder string instead.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -60,59 +61,24 @@ def _redact(value: str) -> str:
     return _PLACEHOLDER_RE.sub(r"{\1}", value) if _PLACEHOLDER_RE.search(value) else "<value>"
 
 
-def prime_browser_session(
+def _prime_browser_session_sync(
     login_url: str,
     steps: list[dict[str, str]],
-    browser_profile_dir: str = DEFAULT_BROWSER_PROFILE_DIR,
-    success_selector: str | None = None,
-    success_url_contains: str | None = None,
-    viewport_width: int = 1280,
-    viewport_height: int = 800,
-    timeout_seconds: int = 30,
-    ignore_https_errors: bool = True,
-    reset_profile: bool = True,
+    browser_profile_dir: str,
+    success_selector: str | None,
+    success_url_contains: str | None,
+    viewport_width: int,
+    viewport_height: int,
+    timeout_seconds: int,
+    ignore_https_errors: bool,
+    reset_profile: bool,
 ) -> dict[str, Any]:
-    """Run a browser flow (typically login), persist the full profile.
+    """Sync inner — runs on a worker thread via `asyncio.to_thread`.
 
-    Args:
-        login_url: First URL to load. Typical: the app's root or login route.
-        steps: Ordered list of step dicts. Each step has:
-            - `action`: one of `goto`, `click`, `fill`,
-              `wait_for_selector`, `wait_for_url`.
-            - `selector` (for `click`, `fill`, `wait_for_selector`): a
-              CSS selector. For `wait_for_url`, the URL substring to
-              match. For `goto`, the destination URL.
-            - `value` (only for `fill`): the text to type. Supports
-              `{ENV_VAR}` placeholders which are substituted from
-              `os.environ` inside the tool — keep secrets out of the
-              LLM message stream by passing `"{TEST_USER_PASSWORD}"`
-              rather than the literal password.
-            - `timeout_seconds` (optional): per-step override of the
-              default `timeout_seconds`.
-        browser_profile_dir: Path to a directory where Playwright will
-            persist the full Chromium profile (cookies, localStorage,
-            IndexedDB, service workers). Pass this same path to
-            `screenshot(browser_profile_dir=...)` to reuse the session.
-            Required for SDKs that persist auth to IndexedDB (Firebase,
-            etc.) — `storage_state` JSON is not enough.
-        success_selector: Optional CSS selector that must be visible
-            after the steps run. Strongly recommended — confirms the
-            flow actually succeeded before persisting the profile.
-        success_url_contains: Optional substring that must appear in the
-            final URL after the steps run.
-        viewport_width / viewport_height: Browser viewport.
-        timeout_seconds: Default per-step timeout. Default 30.
-        ignore_https_errors: Tolerate self-signed TLS certs (default True).
-        reset_profile: If True (default), wipe `browser_profile_dir`
-            before priming so a stale or partially-populated profile
-            cannot mask a fresh failure. Set False to layer additional
-            steps onto an existing profile.
-
-    Returns:
-        On success: `{"success": True, "browser_profile_dir": str,
-            "final_url": str, "steps_completed": int, "log": [str, ...]}`.
-        On failure: `{"success": False, "error": str, "step_index": int,
-            "step": dict, "final_url": str | None, "log": [str, ...]}`.
+    Playwright's sync API and the surrounding filesystem operations
+    (`shutil.rmtree`, `Path.mkdir`) are all blocking; LangGraph's
+    blockbuster instrumentation refuses them on the event loop, so the
+    public `prime_browser_session` is async and offloads here.
     """
     try:
         from playwright.sync_api import sync_playwright
@@ -238,3 +204,72 @@ def prime_browser_session(
         "steps_completed": len(steps),
         "log": log,
     }
+
+
+async def prime_browser_session(
+    login_url: str,
+    steps: list[dict[str, str]],
+    browser_profile_dir: str = DEFAULT_BROWSER_PROFILE_DIR,
+    success_selector: str | None = None,
+    success_url_contains: str | None = None,
+    viewport_width: int = 1280,
+    viewport_height: int = 800,
+    timeout_seconds: int = 30,
+    ignore_https_errors: bool = True,
+    reset_profile: bool = True,
+) -> dict[str, Any]:
+    """Run a browser flow (typically login), persist the full profile.
+
+    Args:
+        login_url: First URL to load. Typical: the app's root or login route.
+        steps: Ordered list of step dicts. Each step has:
+            - `action`: one of `goto`, `click`, `fill`,
+              `wait_for_selector`, `wait_for_url`.
+            - `selector` (for `click`, `fill`, `wait_for_selector`): a
+              CSS selector. For `wait_for_url`, the URL substring to
+              match. For `goto`, the destination URL.
+            - `value` (only for `fill`): the text to type. Supports
+              `{ENV_VAR}` placeholders which are substituted from
+              `os.environ` inside the tool — keep secrets out of the
+              LLM message stream by passing `"{TEST_USER_PASSWORD}"`
+              rather than the literal password.
+            - `timeout_seconds` (optional): per-step override of the
+              default `timeout_seconds`.
+        browser_profile_dir: Path to a directory where Playwright will
+            persist the full Chromium profile (cookies, localStorage,
+            IndexedDB, service workers). Pass this same path to
+            `screenshot(browser_profile_dir=...)` to reuse the session.
+            Required for SDKs that persist auth to IndexedDB (Firebase,
+            etc.) — `storage_state` JSON is not enough.
+        success_selector: Optional CSS selector that must be visible
+            after the steps run. Strongly recommended — confirms the
+            flow actually succeeded before persisting the profile.
+        success_url_contains: Optional substring that must appear in the
+            final URL after the steps run.
+        viewport_width / viewport_height: Browser viewport.
+        timeout_seconds: Default per-step timeout. Default 30.
+        ignore_https_errors: Tolerate self-signed TLS certs (default True).
+        reset_profile: If True (default), wipe `browser_profile_dir`
+            before priming so a stale or partially-populated profile
+            cannot mask a fresh failure. Set False to layer additional
+            steps onto an existing profile.
+
+    Returns:
+        On success: `{"success": True, "browser_profile_dir": str,
+            "final_url": str, "steps_completed": int, "log": [str, ...]}`.
+        On failure: `{"success": False, "error": str, "step_index": int,
+            "step": dict, "final_url": str | None, "log": [str, ...]}`.
+    """
+    return await asyncio.to_thread(
+        _prime_browser_session_sync,
+        login_url,
+        steps,
+        browser_profile_dir,
+        success_selector,
+        success_url_contains,
+        viewport_width,
+        viewport_height,
+        timeout_seconds,
+        ignore_https_errors,
+        reset_profile,
+    )

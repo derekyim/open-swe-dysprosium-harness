@@ -8,6 +8,7 @@ a separate tool call.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 import re
@@ -82,7 +83,59 @@ def _capture(
     return png_bytes, out_path, console, page_errors
 
 
-def screenshot(
+def _screenshot_sync(
+    url: str,
+    viewport_width: int,
+    viewport_height: int,
+    wait_for: str | None,
+    full_page: bool,
+    timeout_seconds: int,
+    ignore_https_errors: bool,
+    browser_profile_dir: str | None,
+) -> list[dict[str, Any]] | str:
+    """Sync inner — runs on a worker thread via `asyncio.to_thread`.
+
+    Playwright's sync API and its internal `os.makedirs` are blocking; LangGraph's
+    blockbuster instrumentation refuses them on the event loop, so the public
+    `screenshot` is async and offloads here.
+    """
+    try:
+        png_bytes, path, console, errors = _capture(
+            url,
+            (viewport_width, viewport_height),
+            wait_for,
+            full_page,
+            timeout_seconds * 1000,
+            ignore_https_errors,
+            browser_profile_dir,
+        )
+    except ImportError:
+        return (
+            "Playwright is not installed. Run `make playwright-install` for local mode, "
+            "or rebuild the sandbox image (the Dockerfile pre-installs Chromium)."
+        )
+    except Exception as exc:  # noqa: BLE001 — Playwright errors are diverse
+        logger.exception("screenshot failed for %s", url)
+        return f"Screenshot of {url} failed: {type(exc).__name__}: {exc}"
+
+    summary = [f"Screenshot of {url}", f"Saved: {path}", f"Bytes: {len(png_bytes)}"]
+    if errors:
+        summary.append(f"\nPage errors ({len(errors)}, last {min(len(errors), _ERROR_TAIL)}):")
+        summary.extend(errors[-_ERROR_TAIL:])
+    if console:
+        summary.append(
+            f"\nConsole messages ({len(console)}, last {min(len(console), _CONSOLE_TAIL)}):"
+        )
+        summary.extend(console[-_CONSOLE_TAIL:])
+
+    encoded = base64.b64encode(png_bytes).decode("ascii")
+    return [
+        create_text_block("\n".join(summary)),
+        create_image_block(base64=encoded, mime_type="image/png"),
+    ]
+
+
+async def screenshot(
     url: str,
     viewport_width: int = 1280,
     viewport_height: int = 800,
@@ -125,37 +178,14 @@ def screenshot(
         path, console messages, page errors) and a PNG image block.
         On failure: a one-line error string.
     """
-    try:
-        png_bytes, path, console, errors = _capture(
-            url,
-            (viewport_width, viewport_height),
-            wait_for,
-            full_page,
-            timeout_seconds * 1000,
-            ignore_https_errors,
-            browser_profile_dir,
-        )
-    except ImportError:
-        return (
-            "Playwright is not installed. Run `make playwright-install` for local mode, "
-            "or rebuild the sandbox image (the Dockerfile pre-installs Chromium)."
-        )
-    except Exception as exc:  # noqa: BLE001 — Playwright errors are diverse
-        logger.exception("screenshot failed for %s", url)
-        return f"Screenshot of {url} failed: {type(exc).__name__}: {exc}"
-
-    summary = [f"Screenshot of {url}", f"Saved: {path}", f"Bytes: {len(png_bytes)}"]
-    if errors:
-        summary.append(f"\nPage errors ({len(errors)}, last {min(len(errors), _ERROR_TAIL)}):")
-        summary.extend(errors[-_ERROR_TAIL:])
-    if console:
-        summary.append(
-            f"\nConsole messages ({len(console)}, last {min(len(console), _CONSOLE_TAIL)}):"
-        )
-        summary.extend(console[-_CONSOLE_TAIL:])
-
-    encoded = base64.b64encode(png_bytes).decode("ascii")
-    return [
-        create_text_block("\n".join(summary)),
-        create_image_block(base64=encoded, mime_type="image/png"),
-    ]
+    return await asyncio.to_thread(
+        _screenshot_sync,
+        url,
+        viewport_width,
+        viewport_height,
+        wait_for,
+        full_page,
+        timeout_seconds,
+        ignore_https_errors,
+        browser_profile_dir,
+    )
