@@ -2,13 +2,13 @@
   {
     "slug": "product",
     "repo": "<owner>/<your-product-repo>",
-    "local_checkout": "../<your-product-repo>",
+    "local_checkout": "sandbox/<your-product-repo>",
     "purpose": "Replace this with a one-sentence description of what lives in the repo."
   },
   {
     "slug": "api",
     "repo": "<owner>/<your-api-repo>",
-    "local_checkout": "../<your-api-repo>",
+    "local_checkout": "sandbox/<your-api-repo>",
     "purpose": "Optional: add another entry per repo your product is composed of."
   }
 ]
