@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 SCREENSHOT_DIR = Path("/tmp/dysprosium_screenshots")
 _CONSOLE_TAIL = 30
 _ERROR_TAIL = 10
+_NETWORK_TAIL = 20
 
 
 def _slugify(value: str) -> str:
@@ -38,13 +39,14 @@ def _capture(
     timeout_ms: int,
     ignore_https_errors: bool,
     browser_profile_dir: str | None,
-) -> tuple[bytes, Path, list[str], list[str]]:
+) -> tuple[bytes, Path, list[str], list[str], list[str]]:
     from playwright.sync_api import sync_playwright
 
     SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
     out_path = SCREENSHOT_DIR / f"{int(time.time() * 1000)}_{_slugify(url)}.png"
     console: list[str] = []
     page_errors: list[str] = []
+    network_failures: list[str] = []
 
     use_profile = bool(browser_profile_dir and Path(browser_profile_dir).exists())
 
@@ -71,16 +73,38 @@ def _capture(
         try:
             page.on("console", lambda msg: console.append(f"[{msg.type}] {msg.text}"))
             page.on("pageerror", lambda err: page_errors.append(str(err)))
+            page.on(
+                "response",
+                lambda resp: (
+                    network_failures.append(
+                        f"[{resp.status}] {resp.request.method} {resp.url}"
+                    )
+                    if resp.status >= 400
+                    else None
+                ),
+            )
+            page.on(
+                "requestfailed",
+                lambda req: network_failures.append(
+                    f"[FAIL] {req.method} {req.url} — {req.failure or 'unknown'}"
+                ),
+            )
 
             page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
             if wait_for:
                 page.wait_for_selector(wait_for, timeout=timeout_ms)
 
-            png_bytes = page.screenshot(path=str(out_path), full_page=full_page)
+            # Get bytes back without letting Playwright write the file. Its sync
+            # API runs `os.makedirs` on its internal dispatcher loop thread,
+            # which has a running event loop — blockbuster fires there even
+            # though we're inside `asyncio.to_thread`. We write the bytes
+            # ourselves on the worker thread, where no event loop runs.
+            png_bytes = page.screenshot(full_page=full_page)
         finally:
             close_target.close()
 
-    return png_bytes, out_path, console, page_errors
+    out_path.write_bytes(png_bytes)
+    return png_bytes, out_path, console, page_errors, network_failures
 
 
 def _screenshot_sync(
@@ -100,7 +124,7 @@ def _screenshot_sync(
     `screenshot` is async and offloads here.
     """
     try:
-        png_bytes, path, console, errors = _capture(
+        png_bytes, path, console, errors, network = _capture(
             url,
             (viewport_width, viewport_height),
             wait_for,
@@ -122,6 +146,12 @@ def _screenshot_sync(
     if errors:
         summary.append(f"\nPage errors ({len(errors)}, last {min(len(errors), _ERROR_TAIL)}):")
         summary.extend(errors[-_ERROR_TAIL:])
+    if network:
+        summary.append(
+            f"\nNetwork failures ({len(network)}, last {min(len(network), _NETWORK_TAIL)}) "
+            "— 4xx/5xx responses + request-level failures:"
+        )
+        summary.extend(network[-_NETWORK_TAIL:])
     if console:
         summary.append(
             f"\nConsole messages ({len(console)}, last {min(len(console), _CONSOLE_TAIL)}):"
