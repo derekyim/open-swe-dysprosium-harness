@@ -35,6 +35,8 @@ def _capture(
     wait_for: str | None,
     full_page: bool,
     timeout_ms: int,
+    ignore_https_errors: bool,
+    browser_profile_dir: str | None,
 ) -> tuple[bytes, Path, list[str], list[str]]:
     from playwright.sync_api import sync_playwright
 
@@ -43,11 +45,29 @@ def _capture(
     console: list[str] = []
     page_errors: list[str] = []
 
+    use_profile = bool(browser_profile_dir and Path(browser_profile_dir).exists())
+
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        try:
-            context = browser.new_context(viewport={"width": viewport[0], "height": viewport[1]})
+        if use_profile:
+            # Persistent context — carries IndexedDB, service workers, etc.,
+            # which `storage_state` would lose. Required for Firebase auth.
+            context = p.chromium.launch_persistent_context(
+                user_data_dir=str(browser_profile_dir),
+                headless=True,
+                viewport={"width": viewport[0], "height": viewport[1]},
+                ignore_https_errors=ignore_https_errors,
+            )
+            page = context.pages[0] if context.pages else context.new_page()
+            close_target = context
+        else:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(
+                viewport={"width": viewport[0], "height": viewport[1]},
+                ignore_https_errors=ignore_https_errors,
+            )
             page = context.new_page()
+            close_target = browser
+        try:
             page.on("console", lambda msg: console.append(f"[{msg.type}] {msg.text}"))
             page.on("pageerror", lambda err: page_errors.append(str(err)))
 
@@ -57,7 +77,7 @@ def _capture(
 
             png_bytes = page.screenshot(path=str(out_path), full_page=full_page)
         finally:
-            browser.close()
+            close_target.close()
 
     return png_bytes, out_path, console, page_errors
 
@@ -69,6 +89,8 @@ def screenshot(
     wait_for: str | None = None,
     full_page: bool = False,
     timeout_seconds: int = 30,
+    ignore_https_errors: bool = True,
+    browser_profile_dir: str | None = None,
 ) -> list[dict[str, Any]] | str:
     """Capture a screenshot of a URL using a headless Chromium browser.
 
@@ -88,6 +110,15 @@ def screenshot(
             just the viewport. Default False.
         timeout_seconds: Per-step timeout for navigation and the
             `wait_for` selector. Default 30.
+        ignore_https_errors: If True (default), the browser context
+            tolerates self-signed / invalid TLS certs — required for
+            local dev servers using mkcert or office-addin-dev-certs.
+        browser_profile_dir: Optional path to a Playwright `user_data_dir`
+            (full Chromium profile) produced by `prime_browser_session`.
+            When provided, the screenshot launches a persistent context
+            from that profile, carrying cookies + localStorage +
+            IndexedDB (Firebase auth lives there). Silently ignored if
+            the directory does not exist.
 
     Returns:
         On success: a multimodal list with a text summary (URL, save
@@ -101,6 +132,8 @@ def screenshot(
             wait_for,
             full_page,
             timeout_seconds * 1000,
+            ignore_https_errors,
+            browser_profile_dir,
         )
     except ImportError:
         return (

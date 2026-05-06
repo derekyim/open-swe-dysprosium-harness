@@ -21,6 +21,7 @@ from .linear_list_teams import linear_list_teams
 from .linear_update_issue import linear_update_issue
 from .list_project_repos import list_project_repos
 from .list_repos import list_repos
+from .prime_browser_session import prime_browser_session
 from .record_lesson import record_lesson
 from .role_status import role_status
 from .screenshot import screenshot
@@ -50,6 +51,7 @@ __all__ = [
     "linear_list_teams",
     "linear_update_issue",
     "list_repos",
+    "prime_browser_session",
     "record_lesson",
     "role_status",
     "screenshot",

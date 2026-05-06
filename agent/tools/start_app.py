@@ -46,26 +46,36 @@ def start_app(
     port: int,
     ready_path: str = "/",
     timeout_seconds: int = 60,
+    scheme: str = "http",
+    verify_tls: bool = True,
 ) -> dict[str, Any]:
-    """Spawn a dev server in the background and poll for HTTP readiness.
+    """Spawn a dev server in the background and poll for HTTP(S) readiness.
 
     The process runs detached (its own session/process group) so it
     survives this tool call. Output is redirected to a log file. The
-    function polls `http://localhost:<port><ready_path>` once a second
-    until it returns any non-5xx response, or the timeout expires.
+    function polls `<scheme>://localhost:<port><ready_path>` once a
+    second until it returns any non-5xx response, or the timeout
+    expires.
 
     Args:
         working_dir: Repo root or package directory in which to run
             `command`. Same shape as you'd `cd` into.
         command: Shell command (passed to bash, not exec'd directly).
             Examples: `"yarn dev"`, `"pnpm --filter web dev"`,
-            `"uvicorn app:app --port 8000"`.
+            `"uvicorn app:app --port 8000"`. Use `"bash -lc '...'"`
+            to get a login shell that sources `~/.nvm/nvm.sh` so
+            `nvm use 20 && npm start` works.
         port: TCP port the app will bind. Used to construct the
             readiness URL and to dedupe state files (one app per port).
         ready_path: Path component for the readiness probe. Defaults to
             `"/"`. Use `"/health"` or `"/api/health"` if the root path
             is slow or auth-gated.
         timeout_seconds: Max seconds to wait for readiness. Default 60.
+            Bump to 180+ for first-time Vite/webpack cold compiles.
+        scheme: `"http"` (default) or `"https"`. Use `"https"` for dev
+            servers that bind TLS only (mkcert / office-addin-dev-certs).
+        verify_tls: Whether to verify TLS certs on the readiness probe.
+            Default `True`. Set `False` for self-signed local certs.
 
     Returns:
         Dict with `success` (bool). On success: `url`, `pid`,
@@ -94,7 +104,7 @@ def start_app(
 
     pid_path.write_text(str(proc.pid))
     pid = proc.pid
-    url = f"http://localhost:{port}{ready_path}"
+    url = f"{scheme}://localhost:{port}{ready_path}"
 
     start = time.time()
     deadline = start + timeout_seconds
@@ -110,7 +120,7 @@ def start_app(
                 "log_tail": _tail(log_path),
             }
         try:
-            response = httpx.get(url, timeout=2, follow_redirects=False)
+            response = httpx.get(url, timeout=2, follow_redirects=False, verify=verify_tls)
         except httpx.HTTPError as exc:
             last_error = f"{type(exc).__name__}: {exc}"
         else:
