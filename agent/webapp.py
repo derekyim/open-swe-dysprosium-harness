@@ -109,6 +109,16 @@ _GITHUB_BOT_MESSAGE_PREFIXES = (
 )
 
 
+def mentions_trigger_tag(text: str) -> bool:
+    """True if `text` contains any of the configured `OPEN_SWE_TAGS`.
+
+    Single source of truth for the "should this webhook wake the agent?"
+    decision so a future tag rename / addition only happens in one place.
+    """
+    text_lower = text.lower()
+    return any(tag in text_lower for tag in OPEN_SWE_TAGS)
+
+
 def get_repo_config_from_team_mapping(
     team_identifier: str, project_name: str = ""
 ) -> dict[str, str]:
@@ -923,9 +933,12 @@ async def linear_webhook(  # noqa: PLR0911, PLR0912, PLR0915
         if comment_body.startswith(prefix):
             logger.debug("Ignoring webhook: comment is our own bot message")
             return {"status": "ignored", "reason": "Comment is our own bot message"}
-    if "@openswe" not in comment_body.lower():
-        logger.debug("Ignoring webhook: comment doesn't mention @openswe")
-        return {"status": "ignored", "reason": "Comment doesn't mention @openswe"}
+    if not mentions_trigger_tag(comment_body):
+        logger.debug("Ignoring webhook: comment doesn't mention any configured trigger tag")
+        return {
+            "status": "ignored",
+            "reason": f"Comment doesn't mention any of {list(OPEN_SWE_TAGS)}",
+        }
 
     issue = data.get("issue", {})
     if not issue:
@@ -1511,10 +1524,13 @@ async def github_webhook(request: Request, background_tasks: BackgroundTasks) ->
                 logger.info("Ignoring GitHub issue edit without title/body changes")
                 return {"status": "ignored", "reason": "Issue edit did not change title or body"}
 
-        issue_text = f"{issue.get('title', '')}\n\n{issue.get('body', '')}".lower()
-        if not any(tag in issue_text for tag in OPEN_SWE_TAGS):
-            logger.info("Ignoring issue that does not mention @openswe or @open-swe")
-            return {"status": "ignored", "reason": "Issue does not mention @openswe or @open-swe"}
+        issue_text = f"{issue.get('title', '')}\n\n{issue.get('body', '')}"
+        if not mentions_trigger_tag(issue_text):
+            logger.info("Ignoring issue that does not mention any configured trigger tag")
+            return {
+                "status": "ignored",
+                "reason": f"Issue does not mention any of {list(OPEN_SWE_TAGS)}",
+            }
 
         logger.info("Accepted GitHub issue webhook, scheduling background task")
         background_tasks.add_task(process_github_issue, payload, event_type)
@@ -1522,9 +1538,12 @@ async def github_webhook(request: Request, background_tasks: BackgroundTasks) ->
 
     comment = payload.get("comment") or payload.get("review", {})
     comment_body = (comment.get("body") or "") if comment else ""
-    if not any(tag in comment_body.lower() for tag in OPEN_SWE_TAGS):
-        logger.info("Ignoring comment that does not mention @openswe or @open-swe")
-        return {"status": "ignored", "reason": "Comment does not mention @openswe or @open-swe"}
+    if not mentions_trigger_tag(comment_body):
+        logger.info("Ignoring comment that does not mention any configured trigger tag")
+        return {
+            "status": "ignored",
+            "reason": f"Comment does not mention any of {list(OPEN_SWE_TAGS)}",
+        }
 
     logger.info("Accepted GitHub webhook: event=%s, scheduling background task", event_type)
     if is_pull_request_comment or event_type in {
