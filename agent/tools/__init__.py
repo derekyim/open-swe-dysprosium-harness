@@ -21,6 +21,7 @@ from .linear_list_teams import linear_list_teams
 from .linear_update_issue import linear_update_issue
 from .list_project_repos import list_project_repos
 from .list_repos import list_repos
+from .record_lesson import record_lesson
 from .role_status import role_status
 from .screenshot import screenshot
 from .slack_thread_reply import slack_thread_reply
@@ -49,6 +50,7 @@ __all__ = [
     "linear_list_teams",
     "linear_update_issue",
     "list_repos",
+    "record_lesson",
     "role_status",
     "screenshot",
     "slack_thread_reply",

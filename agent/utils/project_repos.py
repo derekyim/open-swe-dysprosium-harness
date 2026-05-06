@@ -119,15 +119,68 @@ def load_project_repos() -> list[dict[str, Any]]:
     return file_list
 
 
+def get_visual_testing_slug() -> str | None:
+    """Return the slug of the repo designated for visual testing, or None."""
+    raw = os.environ.get("FRONT_END_REPO_NAME_FOR_VISUAL_TESTING", "").strip()
+    return raw or None
+
+
+def get_front_end_main_page_url() -> str | None:
+    """Return the configured default URL for visual testing, or None.
+
+    Read from `FRONT_END_MAIN_PAGE_URL`. Validates that the value is an
+    `http://` or `https://` URL; logs a warning and returns None on
+    malformed input so the agent doesn't blindly navigate to a junk URL.
+    """
+    raw = os.environ.get("FRONT_END_MAIN_PAGE_URL", "").strip()
+    if not raw:
+        return None
+    if not (raw.startswith("http://") or raw.startswith("https://")):
+        logger.warning(
+            "FRONT_END_MAIN_PAGE_URL=%r is not a valid URL "
+            "(must start with http:// or https://); ignoring",
+            raw,
+        )
+        return None
+    return raw
+
+
+def get_visual_testing_repo() -> dict[str, Any] | None:
+    """Return the full repos.json entry for the visual-testing repo, or None.
+
+    Falls back gracefully:
+    - If the env var is unset, returns None.
+    - If the env var names a slug not present in `repos.json`, logs a
+      warning and returns None so the agent doesn't silently target the
+      wrong repo.
+    """
+    slug = get_visual_testing_slug()
+    if not slug:
+        return None
+    for entry in load_project_repos():
+        if entry["slug"] == slug:
+            return entry
+    logger.warning(
+        "FRONT_END_REPO_NAME_FOR_VISUAL_TESTING=%r does not match any slug in "
+        "repos.json (configured slugs: %s). Visual testing will fall back to "
+        "the agent's judgment.",
+        slug,
+        [e["slug"] for e in load_project_repos()] or "<none>",
+    )
+    return None
+
+
 def format_repos_for_prompt() -> str:
     """Render the repo list as a markdown bullet block for the system prompt.
 
     Empty string when no repos are configured — the section is then
-    omitted entirely.
+    omitted entirely. The repo named by `FRONT_END_REPO_NAME_FOR_VISUAL_TESTING`
+    gets an annotation so the agent can pick it unambiguously.
     """
     repos = load_project_repos()
     if not repos:
         return ""
+    visual_slug = get_visual_testing_slug()
     lines = []
     for entry in repos:
         line = f"- `{entry['slug']}` — `{entry['repo']}`"
@@ -135,5 +188,7 @@ def format_repos_for_prompt() -> str:
             line += f" — {entry['purpose']}"
         if entry.get("local_checkout"):
             line += f" (local checkout: `{entry['local_checkout']}`)"
+        if visual_slug and entry["slug"] == visual_slug:
+            line += "  ← **visual testing target** (`FRONT_END_REPO_NAME_FOR_VISUAL_TESTING`)"
         lines.append(line)
     return "\n".join(lines)

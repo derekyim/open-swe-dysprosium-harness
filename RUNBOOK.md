@@ -18,13 +18,15 @@ curl -s http://${LANGGRAPH_HOST:-localhost}:${LANGGRAPH_PORT:-2024}/threads/sear
 
 ## Where logs and state live
 
-| Source | What's there | When to use |
-|---|---|---|
-| **Terminal running `langgraph dev`** | Every log line, warning, and traceback | First place to look — errors are loud |
-| **Local API** `http://${LANGGRAPH_HOST:-localhost}:${LANGGRAPH_PORT:-2024}` | Run/thread state, message history, queued runs | When you need structured data, not text |
-| **LangGraph Studio UI** `https://smith.langchain.com/studio/?baseUrl=http://${LANGGRAPH_HOST:-localhost}:${LANGGRAPH_PORT:-2024}` | GUI over the local API | Click through threads + runs visually |
-| **LangSmith traces** `https://smith.langchain.com` → project `dysprosium-open-swe` | Per-run model calls, tool calls, latency, errors | See *why* a run stalled or which tool failed. Requires `LANGCHAIN_TRACING_V2=true` (already set in `.env`) |
-| **`.langgraph_api/*.pckl`** | Checkpoint store (pickled) | Don't read directly — use the API above |
+
+| Source                                                                                                                            | What's there                                     | When to use                                                                                                |
+| --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| **Terminal running `langgraph dev`**                                                                                              | Every log line, warning, and traceback           | First place to look — errors are loud                                                                      |
+| **Local API** `http://${LANGGRAPH_HOST:-localhost}:${LANGGRAPH_PORT:-2024}`                                                       | Run/thread state, message history, queued runs   | When you need structured data, not text                                                                    |
+| **LangGraph Studio UI** `https://smith.langchain.com/studio/?baseUrl=http://${LANGGRAPH_HOST:-localhost}:${LANGGRAPH_PORT:-2024}` | GUI over the local API                           | Click through threads + runs visually                                                                      |
+| **LangSmith traces** `https://smith.langchain.com` → project `dysprosium-open-swe`                                                | Per-run model calls, tool calls, latency, errors | See *why* a run stalled or which tool failed. Requires `LANGCHAIN_TRACING_V2=true` (already set in `.env`) |
+| `**.langgraph_api/*.pckl`**                                                                                                       | Checkpoint store (pickled)                       | Don't read directly — use the API above                                                                    |
+
 
 ## Useful local API calls
 
@@ -56,6 +58,7 @@ The webhook fired and a thread was created, but the agent run errored. Run the T
 
 **Mention returned no reaction at all.**
 Webhook didn't reach the harness. Check:
+
 - ngrok tunnel is up and pointing at `localhost:2024` — see `setup.md` for the configured tunnel URL
 - The webhook signing secret in the GitHub/Linear/Slack app config matches `.env` (`GITHUB_WEBHOOK_SECRET`, `LINEAR_WEBHOOK_SECRET`, `SLACK_SIGNING_SECRET`)
 - Terminal log shows the webhook arriving — if not, it's an ingress/auth problem, not an agent problem
@@ -64,9 +67,9 @@ Webhook didn't reach the harness. Check:
 Could be legitimate (model is thinking, sandbox is running a long command) or stuck. LangSmith trace will show the last tool call. If it's `execute` with no return after several minutes, the sandbox command is the bottleneck — the harness sets a 5-minute timeout per `execute` call by default.
 
 **Long agent run got cancelled mid-call with `CancelledError: Shutting down background workers`.**
-The dev server has file-watch auto-reload on (default). Any edit to a watched file (`.env`, `agent/**`, `*.md`, etc.) triggers a restart that kills the running worker. LangGraph's `RETRYING` logic usually catches this and resumes the run on the new process — check `curl /threads/<id>/runs` to confirm the run's `status` went back to `running` rather than `error`. To avoid the disruption entirely on a long task, restart with `make dev-stable` (which adds `--no-reload`); you'll need to manually restart when you want to pick up code changes.
+The dev server has file-watch auto-reload on (default). Any edit to a watched file (`.env`, `agent/`**, `*.md`, etc.) triggers a restart that kills the running worker. LangGraph's `RETRYING` logic usually catches this and resumes the run on the new process — check `curl /threads/<id>/runs` to confirm the run's `status` went back to `running` rather than `error`. To avoid the disruption entirely on a long task, restart with `make dev-stable` (which adds `--no-reload`); you'll need to manually restart when you want to pick up code changes.
 
-**`BlockingError` on first request after a code change.**
+`**BlockingError` on first request after a code change.**
 Something in the request path is doing sync filesystem/network I/O. Either move it to module import time (preferred for static lookups like role files) or wrap it in `await asyncio.to_thread(...)`. Restart `langgraph dev` after the fix.
 
 **Cannot clone repo / GitHub permission errors.**
@@ -98,31 +101,37 @@ Don't do this in production — you'll lose every thread's message queue and fol
 
 All values below default to current behavior — uncomment in `.env` to override. The "Tuning" block at the bottom of `.env` lists them all.
 
-| Env var | Default | What it does |
-|---|---|---|
-| `LANGGRAPH_HOST` | `localhost` | Bind host for `langgraph dev` (set to `0.0.0.0` to expose to LAN / tunnel) |
-| `LANGGRAPH_PORT` | `2024` | Port for `langgraph dev`. Also feeds `LANGGRAPH_URL` when that's not set explicitly |
-| `LANGGRAPH_URL` | `http://$HOST:$PORT` | Fully qualified URL the webapp uses to call its own runs API. Override only when behind a tunnel/proxy |
-| `RUN_PORT` | `8000` | Port for `make run` (webhook-only mode, no graph) |
-| `AGENT_RECURSION_LIMIT` | `1000` | Max graph steps per run before LangGraph aborts |
-| `LLM_MAX_TOKENS` | `20000` | Per-step model output token limit |
-| `LLM_MODEL_ID` | `anthropic:claude-opus-4-6` | Model used by the agent loop |
-| `SANDBOX_TYPE` | `langsmith` | Sandbox provider: `langsmith` / `daytona` / `modal` / `runloop` / `local` |
-| `LOCAL_SANDBOX_ROOT_DIR` | `sandbox` (when `SANDBOX_TYPE=local`) | Working dir for the local sandbox. Relative paths resolve against the harness root. The agent's clones land here. |
-| `SANDBOX_CREATION_TIMEOUT_SECONDS` | `180` | How long to wait for a sandbox to come up |
-| `SANDBOX_POLL_INTERVAL_SECONDS` | `1.0` | Poll cadence while waiting for sandbox |
-| `OPEN_SWE_BOT_NAME` | `open-swe[bot]` | Git author name for sandbox commits + PR trailers |
-| `OPEN_SWE_BOT_EMAIL` | `open-swe@users.noreply.github.com` | Git author email |
-| `BUILD_TEAM_DIR` | `build-team` (relative to harness root) | Path to your build-team checkout — provides `roles/`, `templates/`, `playbooks/`, `default_prompt.md`, `repos.json` |
-| `BUILD_TEAM_NAME` | `Build Team` | Display name surfaced in the agent's role-announcement prompt |
-| `BUILD_TEAM_REPO_URL` | _(unset)_ | Optional GitHub URL of the build team repo, for prompt context |
-| `PRODUCT_NAME` | _(unset)_ | Display name of the product the build team ships, for prompt context |
-| `PRODUCT_REPO` | _(unset)_ | `owner/name` of the primary product repo |
-| `PROJECT_REPOS_JSON` | _(unset)_ | Optional override for the build team's `repos.json`. Same JSON shape — useful for ad-hoc additions without committing to the build team |
-| `TEAM_MEMBERS_JSON` | `{}` | Optional JSON mapping GitHub login → "Name + role" |
-| `ROLES_DIR` | `$BUILD_TEAM_DIR/roles` | Where `role_status` reads role definitions from. Override only if your roles live outside the build team root |
-| `GITHUB_USER_EMAIL_MAP_JSON` | `{}` | JSON object mapping GitHub usernames → emails for collaborator attribution |
-| `OPEN_SWE_MENTION_TAGS` | `@openswe,@open-swe,@openswe-dev` | Comma-separated `@`-mentions that trigger the agent on a GitHub issue/PR |
+
+| Env var                            | Default                                 | What it does                                                                                                                            |
+| ---------------------------------- | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `LANGGRAPH_HOST`                   | `localhost`                             | Bind host for `langgraph dev` (set to `0.0.0.0` to expose to LAN / tunnel)                                                              |
+| `LANGGRAPH_PORT`                   | `2024`                                  | Port for `langgraph dev`. Also feeds `LANGGRAPH_URL` when that's not set explicitly                                                     |
+| `LANGGRAPH_URL`                    | `http://$HOST:$PORT`                    | Fully qualified URL the webapp uses to call its own runs API. Override only when behind a tunnel/proxy                                  |
+| `RUN_PORT`                         | `8000`                                  | Port for `make run` (webhook-only mode, no graph)                                                                                       |
+| `AGENT_RECURSION_LIMIT`            | `1000`                                  | Max graph steps per run before LangGraph aborts                                                                                         |
+| `LLM_MAX_TOKENS`                   | `20000`                                 | Per-step model output token limit                                                                                                       |
+| `LLM_MODEL_ID`                     | `anthropic:claude-opus-4-6`             | Model used by the agent loop                                                                                                            |
+| `SANDBOX_TYPE`                     | `langsmith`                             | Sandbox provider: `langsmith` / `daytona` / `modal` / `runloop` / `local`                                                               |
+| `LOCAL_SANDBOX_ROOT_DIR`           | `sandbox` (when `SANDBOX_TYPE=local`)   | Working dir for the local sandbox. Relative paths resolve against the harness root. The agent's clones land here.                       |
+| `SANDBOX_CREATION_TIMEOUT_SECONDS` | `180`                                   | How long to wait for a sandbox to come up                                                                                               |
+| `SANDBOX_POLL_INTERVAL_SECONDS`    | `1.0`                                   | Poll cadence while waiting for sandbox                                                                                                  |
+| `RUN_ERROR_NOTIFY_ENABLED`         | `true`                                  | When an agent run errors before it can post for itself, a background watcher posts a short "run failed" comment to the source channel. Set `false` to disable. |
+| `RUN_ERROR_POLL_INTERVAL_SECONDS`  | `10`                                    | How often the run-error watcher polls for new failures. Min 2.                                                                          |
+| `OPEN_SWE_BOT_NAME`                | `open-swe[bot]`                         | Git author name for sandbox commits + PR trailers                                                                                       |
+| `OPEN_SWE_BOT_EMAIL`               | `open-swe@users.noreply.github.com`     | Git author email                                                                                                                        |
+| `BUILD_TEAM_DIR`                   | `build-team` (relative to harness root) | Path to your build-team checkout — provides `roles/`, `templates/`, `playbooks/`, `default_prompt.md`, `repos.json`                     |
+| `BUILD_TEAM_NAME`                  | `Build Team`                            | Display name surfaced in the agent's role-announcement prompt                                                                           |
+| `BUILD_TEAM_REPO_URL`              | *(unset)*                               | Optional GitHub URL of the build team repo, for prompt context                                                                          |
+| `PRODUCT_NAME`                     | *(unset)*                               | Display name of the product the build team ships, for prompt context                                                                    |
+| `PRODUCT_REPO`                     | *(unset)*                               | `owner/name` of the primary product repo                                                                                                |
+| `PROJECT_REPOS_JSON`               | *(unset)*                               | Optional override for the build team's `repos.json`. Same JSON shape — useful for ad-hoc additions without committing to the build team |
+| `FRONT_END_REPO_NAME_FOR_VISUAL_TESTING` | *(unset)*                         | Slug from `repos.json` naming the repo whose dev server is the UI for visual testing. Annotated in the agent's prompt as the unambiguous `screenshot()` / Playwright target. |
+| `FRONT_END_MAIN_PAGE_URL`          | *(unset)*                               | Full URL (scheme + port + path) the agent should open as its default visual-testing baseline (e.g. `https://localhost:3000/admin/users`). Surfaced verbatim in the prompt's Visual Verification section. |
+| `TEAM_MEMBERS_JSON`                | `{}`                                    | Optional JSON mapping GitHub login → "Name + role"                                                                                      |
+| `ROLES_DIR`                        | `$BUILD_TEAM_DIR/roles`                 | Where `role_status` reads role definitions from. Override only if your roles live outside the build team root                           |
+| `GITHUB_USER_EMAIL_MAP_JSON`       | `{}`                                    | JSON object mapping GitHub usernames → emails for collaborator attribution                                                              |
+| `OPEN_SWE_MENTION_TAGS`            | `@openswe,@open-swe,@openswe-dev`       | Comma-separated `@`-mentions that trigger the agent on a GitHub issue/PR                                                                |
+
 
 ### Changing the port
 
@@ -203,6 +212,10 @@ your-build-team/
 │   └── QA_REPORT.md
 ├── playbooks/                  # repeatable workflows by task type (optional)
 │   └── frontend-visual-verification.md
+├── memory/                     # durable lessons (auto-loaded into the prompt)
+│   ├── architecture-decisions.md
+│   ├── known-failures.md
+│   └── deploy-gotchas.md
 ├── default_prompt.md           # injected into the agent's system prompt every run
 ├── repos.json                  # the product repos this team operates on
 └── AGENTS.md                   # optional: cross-cutting team conventions
@@ -225,7 +238,9 @@ gh repo create my-build-team --private --source=. --push
 
 **3. Fill in `default_prompt.md`.** Replace the `<placeholders>` with your product's name, repo paths, PRD location, conventions, and any non-negotiables. This content is injected into the agent's system prompt on every run as a "Custom Instructions" block.
 
-**4. Define `repos.json`.** This is how the agent knows which repos compose your product:
+**4. (Optional) Add a `memory/` directory.** Create `<your-build-team>/memory/` with one `.md` file per category of durable lessons (e.g. `architecture-decisions.md`, `known-failures.md`). The harness auto-loads everything in there into the agent's prompt as a "Durable Lessons" section, and the `record_lesson` tool appends new entries the agent learns. Skip this until you have lessons worth recording — leaving the dir empty is fine.
+
+**5. Define `repos.json`.** This is how the agent knows which repos compose your product:
 
 ```json
 [
@@ -267,7 +282,7 @@ Then set `local_checkout: "sandbox/your-frontend"` in the build team's `repos.js
 
 The agent reads this list automatically and exposes it via the `list_project_repos()` tool for cross-repo workflows.
 
-**5. Configure the harness's `.env`.**
+**6. Configure the harness's `.env`.**
 
 Required:
 
@@ -279,6 +294,8 @@ PRODUCT_REPO="your-org/your-frontend"       # primary product repo (used as fall
 DEFAULT_REPO_OWNER="your-org"               # webhook routing fallback
 DEFAULT_REPO_NAME="your-frontend"           # webhook routing fallback
 OPEN_SWE_MENTION_TAGS="@yourbot,@your-other-tag"   # what triggers the agent on GitHub
+FRONT_END_REPO_NAME_FOR_VISUAL_TESTING="frontend"  # slug from repos.json — UI target for screenshots/Playwright
+FRONT_END_MAIN_PAGE_URL="https://localhost:3000/"  # default URL for screenshots — full scheme + port + path
 ```
 
 Optional:
@@ -291,7 +308,7 @@ PROJECT_REPOS_JSON='[ ... ]'                # only for ad-hoc override of repos.
 
 If a value contains spaces, **quote it** — `BUILD_TEAM_NAME=My Build Team` will fail (`source .env` reads `Build` as a command). Use `BUILD_TEAM_NAME="My Build Team"`.
 
-**6. Verify it loads.** Before mentioning the agent on a real ticket:
+**7. Verify it loads.** Before mentioning the agent on a real ticket:
 
 ```bash
 set -a; source .env; set +a
@@ -307,13 +324,14 @@ print('Repos:', [r['slug'] for r in load_project_repos()])
 
 You should see your team name, all your role slugs, and all your repo slugs.
 
-**7. Restart and trigger a real run.**
+**8. Restart and trigger a real run.**
 
 ```bash
 make dev-stable    # or `make dev` if you'll edit code while it runs
 ```
 
 …then mention one of your `OPEN_SWE_MENTION_TAGS` on a GitHub issue. Watch the issue thread for:
+
 - `**<Your Team Name>** opens with a routing announcement` (engineering-manager `starting`)
 - `Role transitions` between specialists
 - `**Engineering Manager** — PR opened: <url>` when `commit_and_open_pr` succeeds
@@ -338,6 +356,36 @@ For a second product, clone the harness into a separate directory and give each 
 ```
 
 The two harness instances run on different ports, see different webhooks (each project's GitHub App points at its own ngrok tunnel → its own port), and operate on different products. Pull harness updates with `git pull` in each — both pick up new tools and prompt changes the same way.
+
+### Test credentials for Playwright
+
+When the agent uses `screenshot()` or runs the product's Playwright specs against an authenticated surface, it needs login credentials. The right home for them is the harness's **`.env`** — it's already gitignored, already sourced into the shell that runs `langgraph dev`, and `LocalShellBackend(inherit_env=True)` propagates env vars into every process the agent spawns (including `npx playwright test`).
+
+```bash
+# .env
+TEST_USER_EMAIL="qa+yourproduct@example.com"
+TEST_USER_PASSWORD="..."
+
+# Multi-role variant:
+TEST_USERS_JSON='{"admin":{"email":"...","password":"..."},"viewer":{"email":"...","password":"..."}}'
+```
+
+**Where to NOT put them:**
+
+- The build team repo — committed, shared with anyone with read access; it's for *configuration*, not secrets.
+- The product repo — same risk if `.env` ever gets tracked accidentally.
+
+#### The `storageState` pattern
+
+Once a test run uses the password to log in, save the resulting cookies/localStorage to a file so subsequent specs start authenticated. Playwright's built-in mechanism is `storageState`:
+
+1. A `globalSetup` script runs once at the top of the test session. It opens a browser, fills in the login form using `process.env.TEST_USER_EMAIL` / `..._PASSWORD`, navigates to the post-login page, and calls `page.context().storageState({ path: 'playwright/.auth/user.json' })`.
+2. Every subsequent spec uses `test.use({ storageState: 'playwright/.auth/user.json' })` (or sets it project-wide in `playwright.config.ts`). The browser starts already logged in.
+3. `playwright/.auth/` is gitignored.
+
+This means the password lives only in your shell and one short-lived browser session per test run. The agent passes it through; it never lands in test code, fixtures, or screenshots.
+
+The skeleton lives in `examples/starter-build-team/playbooks/frontend-visual-verification.md` — copy it into your product's Playwright config and adjust selectors.
 
 ### Things that aren't config
 

@@ -58,8 +58,117 @@ visible evidence the GitHub / Linear comment will surface.
 - `wait_for` selector is essential for SPAs whose root path renders
   before data loads. Use `wait_for="[data-testid='page-ready']"`
   or similar.
-- For pages behind auth, set the test creds in `.env` and have the
-  fixture log in via the Playwright `storageState` mechanism in your
-  product's `e2e/` config — the harness's screenshot tool inherits
-  the same browser session via `start_app`'s dev server, but only if
-  the product itself reads the test session from a known location.
+- The harness's `screenshot()` tool launches its own headless
+  Chromium — it does **not** share cookies with whatever your product's
+  Playwright spec used. For authenticated pages, run the spec via
+  `npx playwright test ...` (which uses the `storageState` recipe
+  below) and call `view_image()` on the resulting screenshots, OR
+  navigate the harness's Chromium through the login form yourself
+  before screenshotting.
+
+## Auth: the `storageState` recipe
+
+Test credentials live in the harness's `.env`:
+
+```bash
+# .env (gitignored)
+TEST_USER_EMAIL="qa+yourproduct@example.com"
+TEST_USER_PASSWORD="..."
+```
+
+Add a `globalSetup` to your product's Playwright config that logs in
+once per test run and saves the auth state to disk. Subsequent specs
+reuse it without ever touching the password.
+
+### `playwright/global-setup.ts`
+
+```typescript
+import { chromium, FullConfig } from '@playwright/test';
+
+const AUTH_FILE = 'playwright/.auth/user.json';
+
+export default async function globalSetup(_config: FullConfig) {
+  const email = process.env.TEST_USER_EMAIL;
+  const password = process.env.TEST_USER_PASSWORD;
+  if (!email || !password) {
+    throw new Error(
+      'TEST_USER_EMAIL / TEST_USER_PASSWORD must be set in the harness .env',
+    );
+  }
+
+  const browser = await chromium.launch();
+  const context = await browser.newContext();
+  const page = await context.newPage();
+
+  await page.goto(process.env.BASE_URL ?? 'http://localhost:3000');
+  await page.getByRole('button', { name: /sign in/i }).click();
+  await page.getByLabel(/email/i).fill(email);
+  await page.getByLabel(/password/i).fill(password);
+  await page.getByRole('button', { name: /^sign in$/i }).click();
+  // Wait for an authenticated-only element so we know login finished
+  await page.waitForSelector('[data-testid="user-menu"]', { timeout: 10_000 });
+
+  await context.storageState({ path: AUTH_FILE });
+  await browser.close();
+}
+```
+
+### `playwright.config.ts`
+
+```typescript
+import { defineConfig, devices } from '@playwright/test';
+
+export default defineConfig({
+  globalSetup: require.resolve('./playwright/global-setup'),
+  use: {
+    baseURL: process.env.BASE_URL ?? 'http://localhost:3000',
+    storageState: 'playwright/.auth/user.json',
+    trace: 'on-first-retry',
+  },
+  projects: [
+    {
+      name: 'chromium',
+      use: { ...devices['Desktop Chrome'] },
+    },
+  ],
+});
+```
+
+### `.gitignore` in the product repo
+
+```
+playwright/.auth/
+playwright-report/
+test-results/
+```
+
+### What the agent should do
+
+1. Confirm `TEST_USER_EMAIL` / `TEST_USER_PASSWORD` are set:
+   `execute(command="test -n \"$TEST_USER_EMAIL\" && echo ok || echo MISSING")`.
+2. `start_app(...)` to bring the dev server up.
+3. `execute("npx playwright test e2e/your-spec.spec.ts")` — the
+   `globalSetup` runs once, all subsequent specs are pre-authenticated.
+4. Use `view_image(path)` on the spec's saved screenshots, or
+   `upload_image(path, label="...")` to put them on the GitHub thread.
+
+### Multi-role variant
+
+If you need both an admin and a regular user (e.g. testing permission
+boundaries), use `TEST_USERS_JSON` and a `globalSetup` that writes one
+storageState file per role:
+
+```bash
+# .env
+TEST_USERS_JSON='{"admin":{"email":"...","password":"..."},"viewer":{"email":"...","password":"..."}}'
+```
+
+```typescript
+// global-setup.ts
+const users = JSON.parse(process.env.TEST_USERS_JSON ?? '{}');
+for (const [role, creds] of Object.entries(users)) {
+  // ... log in, save to playwright/.auth/<role>.json
+}
+```
+
+Then in specs: `test.use({ storageState: 'playwright/.auth/admin.json' })`.

@@ -1,5 +1,6 @@
 """Custom FastAPI routes for LangGraph server."""
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -22,6 +23,7 @@ from .utils.auth import (
     resolve_github_token_from_email,
 )
 from .utils.comments import get_recent_comments
+from .utils.env_config import env_str
 from .utils.github_app import get_github_app_installation_token
 from .utils.github_comments import (
     OPEN_SWE_TAGS,
@@ -41,6 +43,7 @@ from .utils.linear import post_linear_trace_comment
 from .utils.linear_team_repo_map import LINEAR_TEAM_TO_REPO
 from .utils.multimodal import dedupe_urls, extract_image_urls, fetch_image_block
 from .utils.repo import extract_repo_from_text
+from .utils.run_error_watcher import run_error_watcher_loop
 from .utils.sandbox import validate_sandbox_startup_config
 from .utils.slack import (
     add_slack_reaction,
@@ -61,7 +64,24 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     validate_sandbox_startup_config()
-    yield
+    enabled = env_str("RUN_ERROR_NOTIFY_ENABLED", "true").strip().lower() in (
+        "true",
+        "1",
+        "yes",
+        "on",
+    )
+    watcher_task: asyncio.Task[None] | None = None
+    if enabled:
+        watcher_task = asyncio.create_task(run_error_watcher_loop())
+    try:
+        yield
+    finally:
+        if watcher_task is not None:
+            watcher_task.cancel()
+            try:
+                await watcher_task
+            except asyncio.CancelledError:
+                pass
 
 
 app = FastAPI(lifespan=lifespan)

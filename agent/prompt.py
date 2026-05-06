@@ -4,7 +4,8 @@ from pathlib import Path
 
 from .utils.build_team import get_build_team_dir
 from .utils.github_comments import UNTRUSTED_GITHUB_COMMENT_OPEN_TAG
-from .utils.project_repos import format_repos_for_prompt
+from .utils.memory import format_memory_for_prompt
+from .utils.project_repos import format_repos_for_prompt, get_front_end_main_page_url
 from .utils.roles import format_roles_for_prompt
 
 logger = logging.getLogger(__name__)
@@ -80,6 +81,20 @@ You are currently executing a software engineering task. You have access to:
 - Shell commands and code editing tools
 - A sandboxed, git-backed workspace
 - Project-specific rules and conventions from the repository's `AGENTS.md` file (read after cloning — see Repository Setup)"""
+
+
+DURABLE_LESSONS_SECTION_TEMPLATE = """---
+
+### Durable Lessons (build team memory)
+
+The build team has accumulated the following lessons across past runs. Each entry is a constraint or non-obvious fact that a previous run learned the hard way. **Treat them as binding** unless clearly stale or contradicted by current code — when in doubt, name the lesson and ask for confirmation rather than ignoring it.
+
+When you discover something new that's worth remembering for future runs (a non-obvious gotcha, a constraint, a rationale that won't be derivable from code), call `record_lesson(category, title, body)` once at the relevant role's `done` step. **Do not record one-off task details** — those belong in the PR description and decay with time. Lessons are for things that would cost a future run to re-learn.
+
+{available_memory}
+
+If a lesson appears stale (e.g. the file/function it references has been removed or the constraint no longer applies), flag it in your completion summary so the team can prune the entry. Do not silently ignore stale lessons.
+"""
 
 
 PROJECT_REPOS_SECTION_TEMPLATE = """---
@@ -328,11 +343,15 @@ Close the task with a `role_status` `phase="done"` for the closing role (`releas
 """
 
 
-VISUAL_VERIFICATION_SECTION = """---
+VISUAL_VERIFICATION_SECTION_TEMPLATE = """---
 
 ### Visual Verification (frontend changes)
 
-When you change a UI surface, you should *see* the result before opening the PR — not infer it from code. Three tools support this:
+When you change a UI surface, you should *see* the result before opening the PR — not infer it from code.
+
+**Which repo to test against:** if `FRONT_END_REPO_NAME_FOR_VISUAL_TESTING` is set in `.env`, the matching entry in the **Available Project Repositories** section is annotated with `← visual testing target`. That is the repo whose dev server you start with `start_app(...)` and whose URLs you screenshot. Do not guess; use the annotated repo. If no repo is annotated, ask the user which repo's UI to test before proceeding.{default_visual_url_clause}
+
+Three tools support this:
 
 - **`start_app(working_dir, command, port, ready_path?, timeout_seconds?)`** — spawn a dev server in the background and wait until it answers HTTP. The exact `command` / `port` / `ready_path` come from the app's playbook or its `AGENTS.md`. Returns `{{success, url, pid, log_path}}` on success; on failure returns a `log_tail` so you can read what went wrong without `cat`-ing the log file.
 - **`screenshot(url, viewport_width?, viewport_height?, wait_for?, full_page?, timeout_seconds?)`** — headless Chromium screenshot of any URL. Returns the rendered image (you'll see it) plus any console messages and JS errors that fired. Use `wait_for="<css_selector>"` for SPAs whose root path renders before the data loads.
@@ -457,6 +476,7 @@ SYSTEM_PROMPT_TEMPLATE = (
     WORKING_ENV_SECTION
     + TASK_OVERVIEW_SECTION
     + "{project_repos_section}"
+    + "{durable_lessons_section}"
     + "{default_prompt_section}"
     + REPO_SETUP_SECTION
     + FILE_MANAGEMENT_SECTION
@@ -469,7 +489,7 @@ SYSTEM_PROMPT_TEMPLATE = (
     + CODE_REVIEW_GUIDELINES_SECTION
     + COMMUNICATION_SECTION
     + "{role_announcement_section}"
-    + VISUAL_VERIFICATION_SECTION
+    + "{visual_verification_section}"
     + EXTERNAL_UNTRUSTED_COMMENTS_SECTION
     + COMMIT_PR_SECTION
 )
@@ -480,6 +500,27 @@ def _build_project_repos_section() -> str:
     if not available_repos:
         return ""
     return PROJECT_REPOS_SECTION_TEMPLATE.format(available_repos=available_repos)
+
+
+def _build_durable_lessons_section() -> str:
+    available_memory = format_memory_for_prompt()
+    if not available_memory:
+        return ""
+    return DURABLE_LESSONS_SECTION_TEMPLATE.format(available_memory=available_memory)
+
+
+def _build_visual_verification_section() -> str:
+    url = get_front_end_main_page_url()
+    if url:
+        clause = (
+            f"\n\n**Default URL for visual testing:** `{url}` (from "
+            f"`FRONT_END_MAIN_PAGE_URL`). Use this URL for your initial "
+            f"`screenshot()` baseline unless the task description "
+            f"explicitly names a different page."
+        )
+    else:
+        clause = ""
+    return VISUAL_VERIFICATION_SECTION_TEMPLATE.format(default_visual_url_clause=clause)
 
 
 def _build_role_announcement_section() -> str:
@@ -502,6 +543,8 @@ def construct_system_prompt(
     default_prompt_section = _load_default_prompt()
     role_announcement_section = _build_role_announcement_section()
     project_repos_section = _build_project_repos_section()
+    durable_lessons_section = _build_durable_lessons_section()
+    visual_verification_section = _build_visual_verification_section()
     return SYSTEM_PROMPT_TEMPLATE.format(
         working_dir=working_dir,
         linear_project_id=linear_project_id or "<PROJECT_ID>",
@@ -509,4 +552,6 @@ def construct_system_prompt(
         default_prompt_section=default_prompt_section,
         role_announcement_section=role_announcement_section,
         project_repos_section=project_repos_section,
+        durable_lessons_section=durable_lessons_section,
+        visual_verification_section=visual_verification_section,
     )
