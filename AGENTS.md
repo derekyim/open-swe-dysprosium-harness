@@ -41,4 +41,4 @@ For UI work:
 - Record commands attempted and their results.
 - Prefer small, reviewable PRs.
 - Preserve upstream Open SWE behavior unless a task explicitly changes it.
-- Keep generic harness logic separate from EvalGenie-specific logic.
+- Keep generic harness logic separate from per-project / per-build-team logic. Project-specific content (product names, role definitions, playbooks, default prompts) lives in `$BUILD_TEAM_DIR`, never in the harness repo.

@@ -27,19 +27,20 @@ def _format_message(display: str, phase: str, summary: str, *, slack: bool) -> s
 def role_status(role: str, phase: str, summary: str) -> dict[str, Any]:
     """Announce that you are entering or leaving a role.
 
-    Call this whenever you take on or hand off a role from
-    `evalgenie-build-team/roles/`. Posts a short status comment to the
-    source channel (Linear / Slack / GitHub) so reviewers can see who is
-    doing what — e.g. "QA Manager — starting: writing test plan for
-    auth flow" then "QA Manager — done: TEST_PLAN.md drafted".
+    Call this whenever you take on or hand off a role defined in your
+    configured build team (`$BUILD_TEAM_DIR/roles/`). Posts a short
+    status comment to the source channel (Linear / Slack / GitHub) so
+    reviewers can see who is doing what — e.g. "QA Manager — starting:
+    writing test plan for auth flow" then "QA Manager — done: TEST_PLAN.md
+    drafted".
 
     Use this for *role transitions only*, not for every step. The agent
     that triggered the run is the same Linear/Slack/GitHub channel that
     receives these announcements.
 
     Args:
-        role: Role slug from `evalgenie-build-team/roles/` (e.g.
-            `qa-manager`, `architect`, `release-manager`).
+        role: Role slug from your build team's `roles/` directory
+            (e.g. `qa-manager`, `architect`, `release-manager`).
         phase: `"starting"` when the role begins work; `"done"` when the
             role hands off or completes its artifact.
         summary: One short sentence describing the role's intent

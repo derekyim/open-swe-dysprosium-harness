@@ -22,7 +22,7 @@ This fork adds:
 - required proof artifacts
 - QA and release gates
 - memory and reflection artifacts
-- EvalGenie-compatible observability hooks, planned for later phases
+- pluggable observability hooks (planned)
 
 ## Target Workflow
 

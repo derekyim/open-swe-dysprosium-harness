@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is **Dysprosium Harness Kit**, a fork of [Open SWE](https://github.com/langchain-ai/open-swe) that extends the upstream agent with Symphony-style harness patterns (SPEC-first task contracts, role-based routing, required proof artifacts, QA/release gates). See `AGENTS.md` and `docs/harness-engineering.md` for the harness conventions — they apply to work *the agent does inside its sandbox*, not to maintenance work on this codebase itself.
 
-When changing this codebase, **preserve upstream Open SWE behavior unless a task explicitly changes it**, and keep generic harness logic separate from EvalGenie-specific logic.
+When changing this codebase, **preserve upstream Open SWE behavior unless a task explicitly changes it**, and keep harness logic strictly generic. All per-project content (product names, role definitions, playbooks, default prompts, team-member context) lives in the configured build team checkout (`$BUILD_TEAM_DIR`), never in the harness repo.
 
 ## Common commands
 

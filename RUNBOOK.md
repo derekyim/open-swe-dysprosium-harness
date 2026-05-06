@@ -112,7 +112,14 @@ All values below default to current behavior — uncomment in `.env` to override
 | `SANDBOX_POLL_INTERVAL_SECONDS` | `1.0` | Poll cadence while waiting for sandbox |
 | `OPEN_SWE_BOT_NAME` | `open-swe[bot]` | Git author name for sandbox commits + PR trailers |
 | `OPEN_SWE_BOT_EMAIL` | `open-swe@users.noreply.github.com` | Git author email |
-| `ROLES_DIR` | `evalgenie-build-team/roles` | Where `role_status` reads role definitions from |
+| `BUILD_TEAM_DIR` | `build-team` (relative to harness root) | Path to your build-team checkout — provides `roles/`, `templates/`, `playbooks/`, `default_prompt.md`, `repos.json` |
+| `BUILD_TEAM_NAME` | `Build Team` | Display name surfaced in the agent's role-announcement prompt |
+| `BUILD_TEAM_REPO_URL` | _(unset)_ | Optional GitHub URL of the build team repo, for prompt context |
+| `PRODUCT_NAME` | _(unset)_ | Display name of the product the build team ships, for prompt context |
+| `PRODUCT_REPO` | _(unset)_ | `owner/name` of the primary product repo |
+| `PROJECT_REPOS_JSON` | _(unset)_ | Optional override for the build team's `repos.json`. Same JSON shape — useful for ad-hoc additions without committing to the build team |
+| `TEAM_MEMBERS_JSON` | `{}` | Optional JSON mapping GitHub login → "Name + role" |
+| `ROLES_DIR` | `$BUILD_TEAM_DIR/roles` | Where `role_status` reads role definitions from. Override only if your roles live outside the build team root |
 | `GITHUB_USER_EMAIL_MAP_JSON` | `{}` | JSON object mapping GitHub usernames → emails for collaborator attribution |
 | `OPEN_SWE_MENTION_TAGS` | `@openswe,@open-swe,@openswe-dev` | Comma-separated `@`-mentions that trigger the agent on a GitHub issue/PR |
 
@@ -170,3 +177,164 @@ Two knobs matter for long, complex tasks:
 - `LLM_MAX_TOKENS` — bump for tasks that produce long files (architecture docs, large refactors). Costs more per step; default 20k is fine for most code edits.
 
 Both take effect on the next `langgraph dev` restart.
+
+## Using your new dev team
+
+The harness is generic — every project-specific concept (the team's identity, the role personas, artifact templates, playbooks, the product's prompt, and which repos compose the product) lives in a separate **build team** repo. To plug in a new team you create a build-team checkout, point the harness at it via `.env`, and restart.
+
+This section is the end-to-end recipe.
+
+### What's in a build team
+
+A build team is a git repo (or any directory) with this shape:
+
+```
+your-build-team/
+├── roles/                      # one .md per role; H1 = display name, filename stem = slug
+│   ├── engineering-manager.md
+│   ├── architect.md
+│   ├── frontend-engineer.md
+│   ├── backend-engineer.md
+│   └── qa-manager.md
+├── templates/                  # artifact templates the agent fills in per task
+│   ├── SPEC.md
+│   ├── PR_SUMMARY.md
+│   └── QA_REPORT.md
+├── playbooks/                  # repeatable workflows by task type (optional)
+│   └── frontend-visual-verification.md
+├── default_prompt.md           # injected into the agent's system prompt every run
+├── repos.json                  # the product repos this team operates on
+└── AGENTS.md                   # optional: cross-cutting team conventions
+```
+
+Nothing here is harness-side. You can add files (e.g. `memory/`, `quality-gates/`) for your team's own use — the harness only reads the four marked files plus any extra prompt content from `default_prompt.md`.
+
+### Step-by-step: plug in a new team
+
+**1. Scaffold from the starter.** The harness ships a working example at `examples/starter-build-team/`:
+
+```bash
+cp -r examples/starter-build-team ~/code/my-build-team
+cd ~/code/my-build-team
+git init && git add . && git commit -m "initial scaffold"
+gh repo create my-build-team --private --source=. --push
+```
+
+**2. Customize the roles.** Edit each file in `roles/` to match your team. The H1 (`# QA Manager`) becomes the role's display name in announcements; the filename slug (`qa-manager.md`) is what the agent passes to `role_status`. Add or delete role files freely — the harness loads whatever's there.
+
+**3. Fill in `default_prompt.md`.** Replace the `<placeholders>` with your product's name, repo paths, PRD location, conventions, and any non-negotiables. This content is injected into the agent's system prompt on every run as a "Custom Instructions" block.
+
+**4. Define `repos.json`.** This is how the agent knows which repos compose your product:
+
+```json
+[
+  {
+    "slug": "frontend",
+    "repo": "your-org/your-frontend",
+    "local_checkout": "../your-frontend",
+    "purpose": "Next.js companion app + sidecar UI"
+  },
+  {
+    "slug": "api",
+    "repo": "your-org/your-api",
+    "local_checkout": "../your-api",
+    "purpose": "FastAPI services + worker pipelines"
+  },
+  {
+    "slug": "infra",
+    "repo": "your-org/your-infra",
+    "purpose": "Terraform + GitHub Actions for deploys"
+  }
+]
+```
+
+- `slug` is the short tag the agent uses (`role_status(... summary="starting on frontend ...")`)
+- `repo` is `owner/name` — used to build clone URLs and API calls
+- `local_checkout` is optional — a relative or absolute path to a local clone. When set **and** you're running `SANDBOX_TYPE=local`, the agent skips cloning and `cd`s in directly. Ignored for remote sandboxes.
+- `purpose` is one sentence telling the agent what the repo is for. The agent uses these descriptions to decide which repo a task belongs to.
+
+The agent reads this list automatically and exposes it via the `list_project_repos()` tool for cross-repo workflows.
+
+**5. Configure the harness's `.env`.**
+
+Required:
+
+```bash
+BUILD_TEAM_DIR="path/to/my-build-team"      # absolute or relative to harness root
+BUILD_TEAM_NAME="My Build Team"             # display name in role announcements
+PRODUCT_NAME="My Product"                   # for prompt context
+PRODUCT_REPO="your-org/your-frontend"       # primary product repo (used as fallback default)
+DEFAULT_REPO_OWNER="your-org"               # webhook routing fallback
+DEFAULT_REPO_NAME="your-frontend"           # webhook routing fallback
+OPEN_SWE_MENTION_TAGS="@yourbot,@your-other-tag"   # what triggers the agent on GitHub
+```
+
+Optional:
+
+```bash
+BUILD_TEAM_REPO_URL="https://github.com/you/my-build-team"
+TEAM_MEMBERS_JSON='{"alice":"Alice — engineering manager"}'
+PROJECT_REPOS_JSON='[ ... ]'                # only for ad-hoc override of repos.json
+```
+
+If a value contains spaces, **quote it** — `BUILD_TEAM_NAME=My Build Team` will fail (`source .env` reads `Build` as a command). Use `BUILD_TEAM_NAME="My Build Team"`.
+
+**6. Verify it loads.** Before mentioning the agent on a real ticket:
+
+```bash
+set -a; source .env; set +a
+uv run python -c "
+from agent.utils.build_team import get_build_team_dir, get_build_team_name
+from agent.utils.roles import load_roles
+from agent.utils.project_repos import load_project_repos
+print('Team:', get_build_team_name(), '@', get_build_team_dir())
+print('Roles:', list(load_roles()))
+print('Repos:', [r['slug'] for r in load_project_repos()])
+"
+```
+
+You should see your team name, all your role slugs, and all your repo slugs.
+
+**7. Restart and trigger a real run.**
+
+```bash
+make dev-stable    # or `make dev` if you'll edit code while it runs
+```
+
+…then mention one of your `OPEN_SWE_MENTION_TAGS` on a GitHub issue. Watch the issue thread for:
+- `**<Your Team Name>** opens with a routing announcement` (engineering-manager `starting`)
+- `Role transitions` between specialists
+- `**Engineering Manager** — PR opened: <url>` when `commit_and_open_pr` succeeds
+- A final completion comment
+
+If any of these are missing, check the LangGraph dev server's terminal log — the agent's tool calls are visible there, and any `role_status` / `upload_image` failures print the reason.
+
+### Running multiple projects
+
+For a second product, clone the harness into a separate directory and give each its own `.env`:
+
+```
+~/code/
+├── open-swe-dysprosium-harness-evalgenie/      # harness clone 1
+│   └── .env  (BUILD_TEAM_DIR=../evalgenie-build-team, LANGGRAPH_PORT=2024, ...)
+├── open-swe-dysprosium-harness-project2/       # harness clone 2
+│   └── .env  (BUILD_TEAM_DIR=../project2-build-team, LANGGRAPH_PORT=2025, ...)
+├── evalgenie-build-team/
+├── project2-build-team/
+├── agent-quality-helper/
+└── project2-product/
+```
+
+The two harness instances run on different ports, see different webhooks (each project's GitHub App points at its own ngrok tunnel → its own port), and operate on different products. Pull harness updates with `git pull` in each — both pick up new tools and prompt changes the same way.
+
+### Things that aren't config
+
+If you find yourself wanting one of these, the answer is "put it in your build team," not "add a harness env var":
+
+- Product-specific PRDs, design docs, or memory notes → build team `memory/` or product repo `docs/`
+- Dev commands (`yarn dev`, `pnpm test`, etc.) → build team playbooks; the agent reads them when needed
+- Task templates beyond SPEC/PLAN/QA_REPORT → build team `templates/`
+- Quality gates / definition-of-done → build team `quality-gates/`
+- Per-repo lint commands → product repo `AGENTS.md` (which the agent reads after cloning)
+
+Everything in `.env` should be either a credential, an integration setting, or one of the small set of identifiers the harness needs to find your build team. Anything richer belongs in the build team repo where the team can review changes.

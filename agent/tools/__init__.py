@@ -19,6 +19,7 @@ from .linear_get_issue import linear_get_issue
 from .linear_get_issue_comments import linear_get_issue_comments
 from .linear_list_teams import linear_list_teams
 from .linear_update_issue import linear_update_issue
+from .list_project_repos import list_project_repos
 from .list_repos import list_repos
 from .role_status import role_status
 from .screenshot import screenshot
@@ -40,6 +41,7 @@ __all__ = [
     "linear_comment",
     "list_pr_review_comments",
     "list_pr_reviews",
+    "list_project_repos",
     "linear_create_issue",
     "linear_delete_issue",
     "linear_get_issue",

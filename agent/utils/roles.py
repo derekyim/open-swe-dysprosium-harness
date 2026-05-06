@@ -1,9 +1,9 @@
-"""Load role definitions from a roles directory.
+"""Load role definitions from the configured build team's roles directory.
 
 Roles are markdown files whose H1 is the human-readable role name (e.g.
 `# QA Manager`) and whose filename stem is the slug used by the agent
-(e.g. `qa-manager`). The default source is
-`evalgenie-build-team/roles/`; override with the `ROLES_DIR` env var.
+(e.g. `qa-manager`). Source: `$BUILD_TEAM_DIR/roles/` (override the
+roles location specifically with `ROLES_DIR`).
 """
 
 from __future__ import annotations
@@ -12,16 +12,18 @@ import logging
 import os
 from pathlib import Path
 
+from .build_team import get_build_team_dir
+
 logger = logging.getLogger(__name__)
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-_DEFAULT_ROLES_DIR = _REPO_ROOT / "evalgenie-build-team" / "roles"
 _SKIP_FILES = {"README.md"}
 
 
 def _roles_dir() -> Path:
     override = os.environ.get("ROLES_DIR")
-    return Path(override).expanduser().resolve() if override else _DEFAULT_ROLES_DIR
+    if override:
+        return Path(override).expanduser().resolve()
+    return get_build_team_dir() / "roles"
 
 
 def _extract_display_name(path: Path) -> str | None:

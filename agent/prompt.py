@@ -2,24 +2,42 @@ import logging
 import os
 from pathlib import Path
 
+from .utils.build_team import get_build_team_dir
 from .utils.github_comments import UNTRUSTED_GITHUB_COMMENT_OPEN_TAG
+from .utils.project_repos import format_repos_for_prompt
 from .utils.roles import format_roles_for_prompt
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_PROMPT_PATH = os.environ.get(
-    "DEFAULT_PROMPT_PATH",
-    str(Path(__file__).resolve().parent.parent / "default_prompt.md"),
-)
+_HARNESS_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _resolve_default_prompt_path() -> Path:
+    """Find the per-deployment prompt file.
+
+    Resolution order:
+    1. `DEFAULT_PROMPT_PATH` env var (explicit override)
+    2. `$BUILD_TEAM_DIR/default_prompt.md` (recommended — owned by the build team)
+    3. `<harness_root>/default_prompt.md` (legacy fallback for existing deployments)
+    """
+    explicit = os.environ.get("DEFAULT_PROMPT_PATH", "").strip()
+    if explicit:
+        return Path(explicit).expanduser()
+
+    build_team_prompt = get_build_team_dir() / "default_prompt.md"
+    if build_team_prompt.is_file():
+        return build_team_prompt
+
+    return _HARNESS_ROOT / "default_prompt.md"
 
 
 def _load_default_prompt() -> str:
-    """Load custom prompt from the default prompt file.
+    """Load the per-deployment prompt fragment, if one is configured.
 
-    Returns empty string if the file doesn't exist or can't be read.
+    Returns an empty string if no prompt file exists.
     """
+    path = _resolve_default_prompt_path()
     try:
-        path = Path(DEFAULT_PROMPT_PATH)
         if path.is_file():
             content = path.read_text().strip()
             if content:
@@ -30,8 +48,8 @@ def _load_default_prompt() -> str:
 ### Custom Instructions
 
 {escaped}"""
-    except Exception:
-        logger.warning("Failed to read default prompt file at %s", DEFAULT_PROMPT_PATH)
+    except OSError:
+        logger.warning("Failed to read default prompt file at %s", path)
     return ""
 
 
@@ -62,6 +80,22 @@ You are currently executing a software engineering task. You have access to:
 - Shell commands and code editing tools
 - A sandboxed, git-backed workspace
 - Project-specific rules and conventions from the repository's `AGENTS.md` file (read after cloning — see Repository Setup)"""
+
+
+PROJECT_REPOS_SECTION_TEMPLATE = """---
+
+### Available Project Repositories
+
+This product is composed of multiple repositories. Use the slug to refer to each one in role announcements (e.g. "starting work on `frontend`"). For tasks that span repos, you may need to clone more than one.
+
+{available_repos}
+
+When a task arrives without an explicit repo, pick the one whose `purpose` best matches the work. If multiple match, pick the most specific one and note your choice in the routing announcement. If none clearly match, ask for clarification or fall back to the deployment's default repo.
+
+For machine-readable access (e.g. iterating over all repos), call `list_project_repos()`.
+
+When `local_checkout` is set on an entry **and** you are running in a `local` sandbox (no remote sandbox provider), you may `cd` into that path directly instead of cloning. For other sandbox modes, always clone fresh from `<owner>/<name>`.
+"""
 
 
 REPO_SETUP_SECTION = """---
@@ -228,7 +262,7 @@ ROLE_ANNOUNCEMENT_SECTION_TEMPLATE = """---
 
 ### Team Visibility — MANDATORY Announcements
 
-You operate as a multi-role engineering team. Reviewers watching the source channel (Linear / GitHub / Slack) should be able to follow the team's work narratively, without seeing tool calls.
+You are operating as the **{build_team_name}**. Reviewers watching the source channel (Linear / GitHub / Slack) should be able to follow the team's work narratively, without seeing tool calls.
 
 Three events are **non-negotiable** — they MUST appear on the source channel:
 
@@ -422,6 +456,7 @@ Always call `commit_and_open_pr` followed by the appropriate reply tool once imp
 SYSTEM_PROMPT_TEMPLATE = (
     WORKING_ENV_SECTION
     + TASK_OVERVIEW_SECTION
+    + "{project_repos_section}"
     + "{default_prompt_section}"
     + REPO_SETUP_SECTION
     + FILE_MANAGEMENT_SECTION
@@ -440,11 +475,23 @@ SYSTEM_PROMPT_TEMPLATE = (
 )
 
 
+def _build_project_repos_section() -> str:
+    available_repos = format_repos_for_prompt()
+    if not available_repos:
+        return ""
+    return PROJECT_REPOS_SECTION_TEMPLATE.format(available_repos=available_repos)
+
+
 def _build_role_announcement_section() -> str:
     available_roles = format_roles_for_prompt()
     if not available_roles:
         return ""
-    return ROLE_ANNOUNCEMENT_SECTION_TEMPLATE.format(available_roles=available_roles)
+    from .utils.build_team import get_build_team_name
+
+    return ROLE_ANNOUNCEMENT_SECTION_TEMPLATE.format(
+        available_roles=available_roles,
+        build_team_name=get_build_team_name(),
+    )
 
 
 def construct_system_prompt(
@@ -454,10 +501,12 @@ def construct_system_prompt(
 ) -> str:
     default_prompt_section = _load_default_prompt()
     role_announcement_section = _build_role_announcement_section()
+    project_repos_section = _build_project_repos_section()
     return SYSTEM_PROMPT_TEMPLATE.format(
         working_dir=working_dir,
         linear_project_id=linear_project_id or "<PROJECT_ID>",
         linear_issue_number=linear_issue_number or "<ISSUE_NUMBER>",
         default_prompt_section=default_prompt_section,
         role_announcement_section=role_announcement_section,
+        project_repos_section=project_repos_section,
     )
