@@ -71,8 +71,22 @@ __pycache__/
 *.egg-info/
 .eggs/
 
-# 
+#
 # editor temp/backup files
 #*#
 *~
 .#*
+
+# Sibling checkouts that live inside the harness directory for
+# local-sandbox convenience but are independent git repositories.
+# Keep them out of the harness's tracked tree. If you fork this
+# harness for a new project, replace these with your own build-team
+# and product checkouts and update BUILD_TEAM_DIR / DEFAULT_REPO_*
+# env vars accordingly.
+/evalgenie-build-team/
+/agent-quality-helper/
+
+# Per-deployment prompt — read from $BUILD_TEAM_DIR/default_prompt.md
+# instead. The repo-root copy is gitignored so consumers can keep a
+# local fallback without it leaking into the harness repo.
+/default_prompt.md
