@@ -90,3 +90,8 @@ __pycache__/
 # instead. The repo-root copy is gitignored so consumers can keep a
 # local fallback without it leaking into the harness repo.
 /default_prompt.md
+
+# Local-sandbox working area: the agent clones product repos here when
+# SANDBOX_TYPE=local. Everything except sandbox/README.md is ephemeral.
+/sandbox/*
+!/sandbox/README.md

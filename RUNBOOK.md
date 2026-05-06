@@ -108,6 +108,7 @@ All values below default to current behavior — uncomment in `.env` to override
 | `LLM_MAX_TOKENS` | `20000` | Per-step model output token limit |
 | `LLM_MODEL_ID` | `anthropic:claude-opus-4-6` | Model used by the agent loop |
 | `SANDBOX_TYPE` | `langsmith` | Sandbox provider: `langsmith` / `daytona` / `modal` / `runloop` / `local` |
+| `LOCAL_SANDBOX_ROOT_DIR` | `sandbox` (when `SANDBOX_TYPE=local`) | Working dir for the local sandbox. Relative paths resolve against the harness root. The agent's clones land here. |
 | `SANDBOX_CREATION_TIMEOUT_SECONDS` | `180` | How long to wait for a sandbox to come up |
 | `SANDBOX_POLL_INTERVAL_SECONDS` | `1.0` | Poll cadence while waiting for sandbox |
 | `OPEN_SWE_BOT_NAME` | `open-swe[bot]` | Git author name for sandbox commits + PR trailers |
@@ -231,13 +232,13 @@ gh repo create my-build-team --private --source=. --push
   {
     "slug": "frontend",
     "repo": "your-org/your-frontend",
-    "local_checkout": "../your-frontend",
+    "local_checkout": "sandbox/your-frontend",
     "purpose": "Next.js companion app + sidecar UI"
   },
   {
     "slug": "api",
     "repo": "your-org/your-api",
-    "local_checkout": "../your-api",
+    "local_checkout": "sandbox/your-api",
     "purpose": "FastAPI services + worker pipelines"
   },
   {
@@ -250,8 +251,19 @@ gh repo create my-build-team --private --source=. --push
 
 - `slug` is the short tag the agent uses (`role_status(... summary="starting on frontend ...")`)
 - `repo` is `owner/name` — used to build clone URLs and API calls
-- `local_checkout` is optional — a relative or absolute path to a local clone. When set **and** you're running `SANDBOX_TYPE=local`, the agent skips cloning and `cd`s in directly. Ignored for remote sandboxes.
+- `local_checkout` is optional — a path to an already-cloned copy. **Convention: put it under `sandbox/<repo-name>`** so it lives in the harness's gitignored working area (see "The `sandbox/` directory" below). When set and you're running `SANDBOX_TYPE=local`, the agent uses the existing checkout instead of re-cloning. Ignored for remote sandboxes.
 - `purpose` is one sentence telling the agent what the repo is for. The agent uses these descriptions to decide which repo a task belongs to.
+
+#### The `sandbox/` directory
+
+When `SANDBOX_TYPE=local`, the agent's working directory is `<harness>/sandbox/`. Everything inside `sandbox/` is gitignored (except its own README), so cloned product repos don't leak into the harness's diff. To pre-clone something so the agent skips the clone step:
+
+```bash
+cd <harness>/sandbox
+git clone git@github.com:your-org/your-frontend.git
+```
+
+Then set `local_checkout: "sandbox/your-frontend"` in the build team's `repos.json`. The agent will see the existing checkout and operate on it directly. If `local_checkout` points to a path that doesn't exist, the agent falls back to a fresh clone.
 
 The agent reads this list automatically and exposes it via the `list_project_repos()` tool for cross-repo workflows.
 
