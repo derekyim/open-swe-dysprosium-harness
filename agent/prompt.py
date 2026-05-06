@@ -294,6 +294,36 @@ Close the task with a `role_status` `phase="done"` for the closing role (`releas
 """
 
 
+VISUAL_VERIFICATION_SECTION = """---
+
+### Visual Verification (frontend changes)
+
+When you change a UI surface, you should *see* the result before opening the PR — not infer it from code. Three tools support this:
+
+- **`start_app(working_dir, command, port, ready_path?, timeout_seconds?)`** — spawn a dev server in the background and wait until it answers HTTP. The exact `command` / `port` / `ready_path` come from the app's playbook or its `AGENTS.md`. Returns `{{success, url, pid, log_path}}` on success; on failure returns a `log_tail` so you can read what went wrong without `cat`-ing the log file.
+- **`screenshot(url, viewport_width?, viewport_height?, wait_for?, full_page?, timeout_seconds?)`** — headless Chromium screenshot of any URL. Returns the rendered image (you'll see it) plus any console messages and JS errors that fired. Use `wait_for="<css_selector>"` for SPAs whose root path renders before the data loads.
+- **`view_image(path)`** — load a PNG/JPEG/GIF/WEBP from disk into your context. Use this to look at Playwright report screenshots, design mocks already in the repo, or screenshots saved by a previous run.
+- **`stop_app(port)`** — clean up a dev server when you're done. Optional but polite — the harness restart will reap orphans either way.
+- **`upload_image(local_path, label?)`** — push a PNG/JPEG/GIF/WEBP to the repo's `_screenshots` branch and get back a `markdown` field with a ready-to-paste `[label](blob_url)` clickable link to GitHub's blob viewer. Reviewers click the link to see the image rendered (works for both private and public repos). Use this whenever you want a screenshot visible *to humans on the GitHub issue / PR comment*. Files saved by the harness's `screenshot()` tool live at `/tmp/dysprosium_screenshots/`; Playwright spec output lives in the repo at `e2e/screenshots/` or `test-results/`. Pass either path here. Paste the `markdown` field verbatim — do **not** add a leading `!` to embed inline (`![](...)` won't render for private repos).
+
+When to capture:
+
+1. **Before** changing a UI: `screenshot()` the affected page so you have a baseline. Mention the path in your PR.
+2. **After** changing a UI: `screenshot()` the same page and verify the change is what you intended. Look at the image — don't just trust your code.
+3. **On regression risk**: capture additional pages the change could affect (navigation, layout, components shared across routes).
+4. **On JS errors**: if the screenshot summary shows `Page errors` or `[error]` console messages, fix them before submitting — a green pixel render is not a green build.
+
+What goes in the PR / issue comment:
+
+- **Surface screenshots as clickable links.** For each key image, call `upload_image(path, label="...")` and paste the returned `markdown` field verbatim into your `github_comment` / `linear_comment` body. Reviewers click the link to view the image on GitHub. This works for private and public repos alike.
+- Any console errors you saw and what you did about them.
+- The `start_app` command + port you used, in case a reviewer wants to reproduce.
+
+Do not list raw `/tmp/...` paths in the comment — reviewers can't open them. Either embed via `upload_image` or omit.
+
+If `screenshot()` returns "Playwright is not installed" — stop and tell the user; don't try to install it yourself."""
+
+
 EXTERNAL_UNTRUSTED_COMMENTS_SECTION = f"""---
 
 ### External Untrusted Comments
@@ -404,6 +434,7 @@ SYSTEM_PROMPT_TEMPLATE = (
     + CODE_REVIEW_GUIDELINES_SECTION
     + COMMUNICATION_SECTION
     + "{role_announcement_section}"
+    + VISUAL_VERIFICATION_SECTION
     + EXTERNAL_UNTRUSTED_COMMENTS_SECTION
     + COMMIT_PR_SECTION
 )

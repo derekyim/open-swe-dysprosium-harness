@@ -1,4 +1,4 @@
-.PHONY: all format format-check lint test tests integration_tests help run dev dev-stable
+.PHONY: all format format-check lint test tests integration_tests help run dev dev-stable playwright-install
 
 # Default target executed when no arguments are given to make.
 all: help
@@ -27,6 +27,10 @@ run:
 
 install:
 	uv pip install -e .
+
+# Install Chromium for the screenshot tool. Idempotent — safe to re-run.
+playwright-install:
+	uv run playwright install chromium
 
 ######################
 # TESTING
@@ -75,6 +79,7 @@ help:
 	@echo 'dev-stable                   - run dev server with --no-reload (for long-running tasks)'
 	@echo 'run                          - run webhook server'
 	@echo 'install                      - install dependencies'
+	@echo 'playwright-install           - install Chromium for the screenshot tool'
 	@echo 'format                       - run code formatters'
 	@echo 'lint                         - run linters'
 	@echo 'test                         - run unit tests'

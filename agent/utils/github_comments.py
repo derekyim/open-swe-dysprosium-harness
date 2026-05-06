@@ -11,11 +11,28 @@ from typing import Any
 
 import httpx
 
+from .env_config import env_str
 from .github_user_email_map import GITHUB_USER_EMAIL_MAP
 
 logger = logging.getLogger(__name__)
 
-OPEN_SWE_TAGS = ("@openswe", "@open-swe", "@openswe-dev")
+
+def _load_mention_tags() -> tuple[str, ...]:
+    """Load `@`-mention tags that should trigger the agent.
+
+    Read from `OPEN_SWE_MENTION_TAGS` env var as a comma-separated list.
+    Each tag is stripped, lowercased, and dropped if empty. Falls back to
+    the historic Open SWE defaults when the env var is unset.
+    """
+    raw = env_str(
+        "OPEN_SWE_MENTION_TAGS",
+        "@openswe,@open-swe,@openswe-dev",
+    )
+    tags = tuple(t.strip().lower() for t in raw.split(",") if t.strip())
+    return tags or ("@openswe", "@open-swe", "@openswe-dev")
+
+
+OPEN_SWE_TAGS: tuple[str, ...] = _load_mention_tags()
 UNTRUSTED_GITHUB_COMMENT_OPEN_TAG = "<dangerous-external-untrusted-users-comment>"
 UNTRUSTED_GITHUB_COMMENT_CLOSE_TAG = "</dangerous-external-untrusted-users-comment>"
 _SANITIZED_UNTRUSTED_GITHUB_COMMENT_OPEN_TAG = "[blocked-untrusted-comment-tag-open]"

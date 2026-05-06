@@ -63,6 +63,14 @@ ENV PATH=/root/go/bin:/usr/local/go/bin:/root/.local/bin:/usr/local/bin:/usr/loc
 
 WORKDIR /workspace
 
+# Pre-install Playwright + Chromium for the harness's visual-verification tools.
+# Browsers live in /ms-playwright so any Python venv that imports playwright
+# can find them without re-downloading.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN /root/.local/bin/uv tool install --python python3.14 playwright \
+    && /root/.local/bin/uvx playwright install --with-deps chromium \
+    && rm -rf /root/.cache/uv /root/.cache/ms-playwright-cache
+
 RUN echo "=== Installed versions ===" \
     && python --version \
     && uv --version \
@@ -70,4 +78,5 @@ RUN echo "=== Installed versions ===" \
     && yarn --version \
     && go version \
     && docker --version \
-    && git --version
+    && git --version \
+    && /root/.local/bin/uvx playwright --version

@@ -21,7 +21,11 @@ from .linear_list_teams import linear_list_teams
 from .linear_update_issue import linear_update_issue
 from .list_repos import list_repos
 from .role_status import role_status
+from .screenshot import screenshot
 from .slack_thread_reply import slack_thread_reply
+from .start_app import start_app, stop_app
+from .upload_image import upload_image
+from .view_image import view_image
 from .web_search import web_search
 
 __all__ = [
@@ -44,8 +48,13 @@ __all__ = [
     "linear_update_issue",
     "list_repos",
     "role_status",
+    "screenshot",
     "slack_thread_reply",
+    "start_app",
+    "stop_app",
     "submit_pr_review",
     "update_pr_review",
+    "upload_image",
+    "view_image",
     "web_search",
 ]

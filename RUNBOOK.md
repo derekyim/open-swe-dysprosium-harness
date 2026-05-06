@@ -114,6 +114,7 @@ All values below default to current behavior — uncomment in `.env` to override
 | `OPEN_SWE_BOT_EMAIL` | `open-swe@users.noreply.github.com` | Git author email |
 | `ROLES_DIR` | `evalgenie-build-team/roles` | Where `role_status` reads role definitions from |
 | `GITHUB_USER_EMAIL_MAP_JSON` | `{}` | JSON object mapping GitHub usernames → emails for collaborator attribution |
+| `OPEN_SWE_MENTION_TAGS` | `@openswe,@open-swe,@openswe-dev` | Comma-separated `@`-mentions that trigger the agent on a GitHub issue/PR |
 
 ### Changing the port
 
