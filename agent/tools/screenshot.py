@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import io
 import logging
 import re
 import time
@@ -24,6 +25,37 @@ SCREENSHOT_DIR = Path("/tmp/dysprosium_screenshots")
 _CONSOLE_TAIL = 30
 _ERROR_TAIL = 10
 _NETWORK_TAIL = 20
+# Anthropic's many-image rule: each image in a multi-image request must be
+# <= 2000px on both sides. Full-page screenshots routinely exceed this on
+# height (1280 x 5000+), so we downscale proportionally before sending.
+_MAX_IMAGE_DIM = 2000
+
+
+def _downscale_for_model(png_bytes: bytes) -> tuple[bytes, tuple[int, int], tuple[int, int] | None]:
+    """Return (bytes_for_model, original_dims, new_dims_or_None).
+
+    If the image exceeds `_MAX_IMAGE_DIM` on either side, return a resized
+    copy (preserving aspect ratio) and the new dims. Otherwise pass through.
+    Pillow is a hard dep; if import fails (rare), fall back to original
+    bytes and let the API surface the size error itself.
+    """
+    try:
+        from PIL import Image
+    except ImportError:
+        logger.warning("Pillow unavailable; cannot downscale screenshot for model")
+        return png_bytes, (0, 0), None
+
+    with Image.open(io.BytesIO(png_bytes)) as img:
+        w, h = img.size
+        if w <= _MAX_IMAGE_DIM and h <= _MAX_IMAGE_DIM:
+            return png_bytes, (w, h), None
+        scale = _MAX_IMAGE_DIM / max(w, h)
+        new_w = max(1, int(w * scale))
+        new_h = max(1, int(h * scale))
+        resized = img.resize((new_w, new_h), Image.LANCZOS)
+        buf = io.BytesIO()
+        resized.save(buf, format="PNG", optimize=True)
+        return buf.getvalue(), (w, h), (new_w, new_h)
 
 
 def _slugify(value: str) -> str:
@@ -39,7 +71,7 @@ def _capture(
     timeout_ms: int,
     ignore_https_errors: bool,
     browser_profile_dir: str | None,
-) -> tuple[bytes, Path, list[str], list[str], list[str]]:
+) -> tuple[bytes, Path, list[str], list[str], list[str], tuple[int, int], tuple[int, int] | None]:
     from playwright.sync_api import sync_playwright
 
     SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
@@ -104,7 +136,19 @@ def _capture(
             close_target.close()
 
     out_path.write_bytes(png_bytes)
-    return png_bytes, out_path, console, page_errors, network_failures
+    # Disk file keeps the full-resolution PNG for human inspection; the
+    # bytes returned to the model are downscaled if needed so we don't
+    # trip Anthropic's 2000px many-image limit.
+    model_bytes, original_dims, downscaled_to = _downscale_for_model(png_bytes)
+    return (
+        model_bytes,
+        out_path,
+        console,
+        page_errors,
+        network_failures,
+        original_dims,
+        downscaled_to,
+    )
 
 
 def _screenshot_sync(
@@ -124,7 +168,7 @@ def _screenshot_sync(
     `screenshot` is async and offloads here.
     """
     try:
-        png_bytes, path, console, errors, network = _capture(
+        png_bytes, path, console, errors, network, original_dims, downscaled = _capture(
             url,
             (viewport_width, viewport_height),
             wait_for,
@@ -142,7 +186,18 @@ def _screenshot_sync(
         logger.exception("screenshot failed for %s", url)
         return f"Screenshot of {url} failed: {type(exc).__name__}: {exc}"
 
-    summary = [f"Screenshot of {url}", f"Saved: {path}", f"Bytes: {len(png_bytes)}"]
+    summary = [f"Screenshot of {url}", f"Saved: {path} (full-resolution PNG)"]
+    if original_dims != (0, 0):
+        ow, oh = original_dims
+        if downscaled:
+            dw, dh = downscaled
+            summary.append(
+                f"Original {ow}x{oh}, sent {dw}x{dh} to model "
+                f"(downscaled to fit Anthropic's 2000px many-image limit)"
+            )
+        else:
+            summary.append(f"Dimensions: {ow}x{oh}")
+    summary.append(f"Bytes (sent): {len(png_bytes)}")
     if errors:
         summary.append(f"\nPage errors ({len(errors)}, last {min(len(errors), _ERROR_TAIL)}):")
         summary.extend(errors[-_ERROR_TAIL:])
