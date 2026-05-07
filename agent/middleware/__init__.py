@@ -1,10 +1,12 @@
 from .announce_progress import announce_progress_if_needed
 from .check_message_queue import check_message_queue_before_model
 from .ensure_no_empty_msg import ensure_no_empty_msg
+from .image_size import ImageSizeMiddleware
 from .open_pr import open_pr_if_needed
 from .tool_error_handler import ToolErrorMiddleware
 
 __all__ = [
+    "ImageSizeMiddleware",
     "ToolErrorMiddleware",
     "announce_progress_if_needed",
     "check_message_queue_before_model",
