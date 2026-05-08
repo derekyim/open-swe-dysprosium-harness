@@ -158,6 +158,15 @@ One-shot override without editing `.env`:
 make dev LANGGRAPH_PORT=3030 LANGGRAPH_HOST=0.0.0.0
 ```
 
+For a clean run where you don't risk the agent stopping due to code changes
+set -a && source .env && set +a && make dev-stable
+
+Modal
+if using modal sandboxes with multiple projects 
+ /Users/<username>/.modal.toml
+just make sure only one profile is active and the rest have
+ active = false
+
 After changing the port, update the curl commands in the TL;DR check above:
 
 ```bash
