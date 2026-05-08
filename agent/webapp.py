@@ -6,6 +6,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -130,13 +131,42 @@ _GITHUB_BOT_MESSAGE_PREFIXES = (
 
 
 def mentions_trigger_tag(text: str) -> bool:
-    """True if `text` contains any of the configured `OPEN_SWE_TAGS`.
+    """True if `text` contains any configured `OPEN_SWE_TAGS` as a real mention.
 
     Single source of truth for the "should this webhook wake the agent?"
     decision so a future tag rename / addition only happens in one place.
+
+    A tag matches only when:
+      - the `@` is at start-of-string or preceded by a non-word, non-`@`
+        character (so email addresses like `user@dysprosium.io` don't
+        match `@dysprosium`).
+      - it is *not* followed by a word character, `.`, or `-` (so
+        `@dysprosium.io`, `@dysprosium-harness`, and `@dysprosiumer`
+        don't match `@dysprosium`).
+    """
+    matched_tag, _ = _matched_trigger_tag(text)
+    return matched_tag is not None
+
+
+def _matched_trigger_tag(text: str) -> tuple[str | None, str | None]:
+    """Return `(tag, surrounding_context)` of the first matching tag, or `(None, None)`.
+
+    Used by `mentions_trigger_tag` and by the webhook handlers' debug logs
+    so we can see which tag fired and the ~60 chars of surrounding text.
     """
     text_lower = text.lower()
-    return any(tag in text_lower for tag in OPEN_SWE_TAGS)
+    for tag in OPEN_SWE_TAGS:
+        # `@` cannot be preceded by a word char or another `@` (excludes
+        # `email@dysprosium.io`); cannot be followed by a word char, `.`,
+        # or `-` (excludes `@dysprosium.io`, `@dysprosium-harness` matching
+        # the shorter `@dysprosium`, etc.).
+        pattern = r"(?<![\w@])" + re.escape(tag) + r"(?![\w.\-])"
+        match = re.search(pattern, text_lower)
+        if match:
+            start = max(0, match.start() - 30)
+            end = min(len(text_lower), match.end() + 30)
+            return tag, text_lower[start:end]
+    return None, None
 
 
 def get_repo_config_from_team_mapping(
@@ -953,12 +983,16 @@ async def linear_webhook(  # noqa: PLR0911, PLR0912, PLR0915
         if comment_body.startswith(prefix):
             logger.debug("Ignoring webhook: comment is our own bot message")
             return {"status": "ignored", "reason": "Comment is our own bot message"}
-    if not mentions_trigger_tag(comment_body):
+    matched_tag, matched_ctx = _matched_trigger_tag(comment_body)
+    if matched_tag is None:
         logger.debug("Ignoring webhook: comment doesn't mention any configured trigger tag")
         return {
             "status": "ignored",
             "reason": f"Comment doesn't mention any of {list(OPEN_SWE_TAGS)}",
         }
+    logger.info(
+        "Linear webhook trigger matched: tag=%r context=%r", matched_tag, matched_ctx
+    )
 
     issue = data.get("issue", {})
     if not issue:
@@ -1545,26 +1579,38 @@ async def github_webhook(request: Request, background_tasks: BackgroundTasks) ->
                 return {"status": "ignored", "reason": "Issue edit did not change title or body"}
 
         issue_text = f"{issue.get('title', '')}\n\n{issue.get('body', '')}"
-        if not mentions_trigger_tag(issue_text):
+        issue_tag, issue_ctx = _matched_trigger_tag(issue_text)
+        if issue_tag is None:
             logger.info("Ignoring issue that does not mention any configured trigger tag")
             return {
                 "status": "ignored",
                 "reason": f"Issue does not mention any of {list(OPEN_SWE_TAGS)}",
             }
 
+        logger.info(
+            "GitHub issue webhook trigger matched: tag=%r context=%r",
+            issue_tag,
+            issue_ctx,
+        )
         logger.info("Accepted GitHub issue webhook, scheduling background task")
         background_tasks.add_task(process_github_issue, payload, event_type)
         return {"status": "accepted", "message": "Processing GitHub issue event"}
 
     comment = payload.get("comment") or payload.get("review", {})
     comment_body = (comment.get("body") or "") if comment else ""
-    if not mentions_trigger_tag(comment_body):
+    comment_tag, comment_ctx = _matched_trigger_tag(comment_body)
+    if comment_tag is None:
         logger.info("Ignoring comment that does not mention any configured trigger tag")
         return {
             "status": "ignored",
             "reason": f"Comment does not mention any of {list(OPEN_SWE_TAGS)}",
         }
 
+    logger.info(
+        "GitHub comment webhook trigger matched: tag=%r context=%r",
+        comment_tag,
+        comment_ctx,
+    )
     logger.info("Accepted GitHub webhook: event=%s, scheduling background task", event_type)
     if is_pull_request_comment or event_type in {
         "pull_request_review_comment",
