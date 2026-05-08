@@ -1,4 +1,15 @@
 <div align="center">
+  <h3>This is a Fork of Open SWE called Dysprosium Harness</h3>
+  The open-swe framework is great, its been expanded here to contain
+  * Besides some minor changes, the primary addition is a 'build-team' as a dependent repository.
+  ** define the roles you want to act and when
+  ** team memory gets written to your build team repository, to save how you want them to work.
+  ** template team included here
+  * see the RUNBOOK for modifications and run instructions  [RUNBOOK.md](https://github.com/derekyim/open-swe-dysprosium-harness/blob/main/RUNBOOK.md)
+</div>
+
+
+<div align="center">
   <a href="https://github.com/langchain-ai/open-swe">
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="static/dark.svg">
@@ -28,6 +39,9 @@ Open SWE is the open-source version of this pattern. Built on [LangGraph](https:
 
 > [!NOTE]
 > 💬 Read the **announcement blog post [here](https://blog.langchain.com/open-swe-an-open-source-framework-for-internal-coding-agents/)**
+
+> [!IMPORTANT]
+> 🔒 **Run in a real sandbox before exposing this to anyone but yourself.** With `SANDBOX_TYPE=local` (the default for getting started), the agent's shell and file operations run **directly on the harness host**. If the harness is reachable from outside your machine — e.g. via an ngrok tunnel for webhook delivery — anyone who can reach a webhook can coerce the agent into reading host files (`~/.ssh`, `.env`, etc.) and executing arbitrary shell. See [Sandbox Setup (Modal)](#sandbox-setup-modal) below to lock this down before turning on Linear/Slack/GitHub webhooks.
 
 ---
 
@@ -136,6 +150,53 @@ This is an area where you can extend Open SWE for your org: add deterministic CI
 - **GitHub OAuth built-in** — authenticates with your GitHub account automatically
 - **Opens PRs automatically** — commits changes and opens a draft PR when done, linked back to your ticket
 - **Subagent support** — the agent can spawn child agents for parallel subtasks
+
+---
+
+## Sandbox Setup (Modal)
+
+The default `SANDBOX_TYPE=local` runs every agent shell command and file operation **directly on the harness host** — fine for hacking on the harness itself, but unsafe once the harness is reachable from outside your machine. For real use, point the agent at a cloud sandbox so its blast radius is a throwaway container.
+
+[Modal](https://modal.com/) is the simplest provider to bring up — generous free tier, ~2-second cold starts, no infra to manage.
+
+### Quickstart
+
+```bash
+# 1. Sign up at https://modal.com (free tier is fine to start).
+
+# 2. Authenticate the SDK once per machine (writes ~/.modal.toml).
+uv run modal setup
+```
+
+Then in `.env`:
+
+```bash
+SANDBOX_TYPE=modal
+MODAL_APP_NAME=harness-<your-label>   # shows up in Modal's dashboard
+```
+
+Restart the harness (`make dev-stable` recommended). Trigger an agent task. The first run lazily creates the Modal app and a sandbox; check **https://modal.com/apps** to see them.
+
+### Multiple harnesses
+
+If you run several harnesses (e.g., one per organization), pick a pattern:
+
+| Pattern | When |
+|---|---|
+| **One Modal workspace, distinct `MODAL_APP_NAME`** per harness | Same operator, shared billing |
+| **Two Modal workspaces, named profiles in `~/.modal.toml`** | Separate billing/governance. Each harness sets `MODAL_PROFILE=<workspace>` in its `.env` |
+
+### Verifying isolation
+
+After switching to Modal, send the agent a comment like:
+
+> @openswe run `uname -a` and show me the output
+
+If the result contains `Linux ...` (Modal containers run Debian), the agent's shell is in Modal. If it returns `Darwin ...` (your Mac), something is still routing to your laptop.
+
+### Other providers
+
+`SANDBOX_TYPE` also accepts `daytona`, `runloop`, `langsmith`, and `local`. See [CUSTOMIZATION.md § Sandbox](CUSTOMIZATION.md#1-sandbox) for switching.
 
 ---
 
