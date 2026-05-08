@@ -21,6 +21,7 @@ import asyncio
 warnings.filterwarnings("ignore", message=".*Pydantic V1.*", category=UserWarning)
 
 # Now safe to import agent (which imports LangChain modules)
+import modal.exception
 from deepagents import create_deep_agent
 from deepagents.backends.protocol import SandboxBackendProtocol
 from langsmith.sandbox import SandboxClientError
@@ -90,7 +91,10 @@ async def _create_sandbox_with_proxy() -> SandboxBackendProtocol:
     Uses create_sandbox (generic factory) so non-langsmith providers still work.
     For langsmith sandboxes, configures the proxy with the installation token.
     """
-    sandbox_backend = await asyncio.to_thread(create_sandbox)
+    # `create_sandbox` is now an async function that internally awaits
+    # async factories (Modal) and `asyncio.to_thread`s sync ones (local,
+    # daytona, runloop, langsmith). No outer to_thread needed.
+    sandbox_backend = await create_sandbox()
 
     sandbox_type = os.getenv("SANDBOX_TYPE", "langsmith")
     if sandbox_type == "langsmith":
@@ -149,17 +153,27 @@ async def check_or_recreate_sandbox(
     """Check if a cached sandbox is reachable; recreate it if not.
 
     Pings the sandbox with a lightweight command. If the sandbox is
-    unreachable (SandboxClientError), it is torn down and a fresh one
-    is created via _recreate_sandbox.
+    unreachable, it is torn down and a fresh one is created via
+    `_recreate_sandbox`.
+
+    Caught failure modes:
+      - `SandboxClientError`: LangSmith sandbox provider's "gone" signal.
+      - `modal.exception.Error`: Modal's base error class, covering
+        `NotFoundError` (sandbox auto-shut-down due to idle timeout —
+        Modal sandboxes don't persist forever), `SandboxTerminatedError`,
+        `SandboxTimeoutError`, and `ConnectionError`. Any of these mean
+        "the cached handle is no good, get a fresh one."
 
     Returns the original backend if healthy, or a new one if recreated.
     """
     try:
         await asyncio.to_thread(sandbox_backend.execute, "echo ok")
-    except SandboxClientError:
+    except (SandboxClientError, modal.exception.Error) as exc:
         logger.warning(
-            "Cached sandbox is no longer reachable for thread %s, recreating",
+            "Cached sandbox is no longer reachable for thread %s (%s: %s), recreating",
             thread_id,
+            type(exc).__name__,
+            exc,
         )
         sandbox_backend = await _recreate_sandbox(thread_id)
     return sandbox_backend
@@ -246,7 +260,7 @@ async def get_agent(config: RunnableConfig) -> Pregel:
     else:
         logger.info("Connecting to existing sandbox %s", sandbox_id)
         try:
-            sandbox_backend = await asyncio.to_thread(create_sandbox, sandbox_id)
+            sandbox_backend = await create_sandbox(sandbox_id)
             logger.info("Connected to existing sandbox %s", sandbox_id)
         except Exception:
             logger.warning("Failed to connect to existing sandbox %s, creating new one", sandbox_id)

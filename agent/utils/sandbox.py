@@ -1,3 +1,5 @@
+import asyncio
+import inspect
 import os
 
 from agent.integrations.daytona import create_daytona_sandbox
@@ -15,11 +17,16 @@ SANDBOX_FACTORIES = {
 }
 
 
-def create_sandbox(sandbox_id: str | None = None):
+async def create_sandbox(sandbox_id: str | None = None):
     """Create or reconnect to a sandbox using the configured provider.
 
     The provider is selected via the SANDBOX_TYPE environment variable.
     Supported values: langsmith (default), daytona, modal, runloop, local.
+
+    Async-aware: if the configured factory is a coroutine function (e.g.
+    Modal, which must use its `.aio` API to avoid nested-loop blockbuster
+    errors under langgraph dev), it is awaited directly. Sync factories
+    run on a worker thread so they don't block the event loop.
 
     Args:
         sandbox_id: Optional existing sandbox ID to reconnect to.
@@ -32,7 +39,9 @@ def create_sandbox(sandbox_id: str | None = None):
     if not factory:
         supported = ", ".join(sorted(SANDBOX_FACTORIES))
         raise ValueError(f"Invalid sandbox type: {sandbox_type}. Supported types: {supported}")
-    return factory(sandbox_id)
+    if inspect.iscoroutinefunction(factory):
+        return await factory(sandbox_id)
+    return await asyncio.to_thread(factory, sandbox_id)
 
 
 def validate_sandbox_startup_config() -> None:

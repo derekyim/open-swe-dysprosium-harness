@@ -11,13 +11,18 @@ all: help
 LANGGRAPH_HOST ?= localhost
 LANGGRAPH_PORT ?= 2024
 
+# `--allow-blocking` disables langgraph dev's blockbuster instrumentation,
+# which otherwise catches sync I/O inside vendor SDKs we don't control
+# (Modal's `Resolver.__init__` does sync `tempfile.TemporaryFile()`,
+# Playwright's sync API, etc.). Dev-only: in production (Cloud Run +
+# uvicorn) blockbuster is not active so this flag is unnecessary.
 dev:
-	langgraph dev --host $(LANGGRAPH_HOST) --port $(LANGGRAPH_PORT)
+	langgraph dev --host $(LANGGRAPH_HOST) --port $(LANGGRAPH_PORT) --allow-blocking --no-browser
 
 # Same as dev but disables file-watch auto-reload — use when an agent run
 # is in flight and you don't want a code/`.env`/docs edit to kill it mid-call.
 dev-stable:
-	langgraph dev --host $(LANGGRAPH_HOST) --port $(LANGGRAPH_PORT) --no-reload
+	langgraph dev --host $(LANGGRAPH_HOST) --port $(LANGGRAPH_PORT) --no-reload --allow-blocking --no-browser
 
 # Override via env or `make run RUN_PORT=9000`
 RUN_PORT ?= 8000
